@@ -1,5 +1,18 @@
 # Android releases
 
+## Building the APK
+
+The release packaging script currently targets the developer's Windows Android toolchain. It uses the Gradle wrapper and checks the packaged native libraries against staged build outputs:
+
+```powershell
+git submodule update --init --recursive
+.\scripts\android\package-real-apk.ps1 -Variant Release
+```
+
+The native CMake build directories must already be configured at `targets/mkvsdcu/private/rexglue-host/out/android-arm64` and `references/rexglue-sdk/out/android-arm64`. The host configuration needs a legally obtained `default.xex` for ReXGlue code generation. Keep that game file, generated game data, and all signing keys out of Git. `-SkipNativeBuild` packages existing native outputs without rebuilding them.
+
+The repository does not yet include a clean-checkout Android CMake bootstrap script. A developer setting up a new machine must configure those two Android ARM64 CMake builds with the Android SDK/NDK before using the packaging command. The current APK was produced in the existing developer build environment.
+
 ## Versioning
 
 Use `vMAJOR.MINOR.PATCH` tags. While the Android port is experimental, mark GitHub releases as prereleases; use a suffix such as `-alpha.1` only when the APK's `versionName` uses the same suffix. Keep Gradle's numeric `versionName` aligned with the tag and increase `versionCode` for every APK. Promote to a stable release only when the release notes describe repeatable device and gameplay validation.
