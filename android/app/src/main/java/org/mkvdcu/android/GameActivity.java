@@ -90,13 +90,14 @@ public class GameActivity extends SDLActivity {
     };
 
     static native void nativeSetVirtualGamepadState(int buttons, int thumbLx, int thumbLy);
+    static native void nativeSetVirtualGamepadStateV2(int buttons,int thumbLx,int thumbLy,int thumbRx,int thumbRy,int leftTrigger,int rightTrigger);
     static native String nativeReadHealthSnapshot();
     static native String nativeReadPerformanceSnapshot();
     static native String nativeReadFrameIntervals(long afterFrame);
     static native void nativeStartCpuProfile();
 
     static void setVirtualGamepadState(int buttons, int thumbLx, int thumbLy) {
-        nativeSetVirtualGamepadState(buttons, thumbLx, thumbLy);
+        nativeSetVirtualGamepadStateV2(buttons, thumbLx, thumbLy,0,0,0,0);
     }
 
     /** The Xbox game is authored for a landscape display; SDL's resizable
@@ -164,7 +165,8 @@ public class GameActivity extends SDLActivity {
         android.view.View content = SDLActivity.getContentView();
         if (content instanceof ViewGroup) {
             ViewGroup root = (ViewGroup) content;
-            virtualGamepadView = new VirtualGamepadView(this);
+            virtualGamepadView = new VirtualGamepadView(this,GameActivity::nativeSetVirtualGamepadStateV2,
+                ()->startActivity(new android.content.Intent(this,GamepadEditorActivity.class)));
             root.addView(virtualGamepadView, new RelativeLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             Log.i(TAG, "Virtual touchscreen gamepad enabled");
@@ -206,6 +208,7 @@ public class GameActivity extends SDLActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if(virtualGamepadView!=null)virtualGamepadView.reloadLayout();
         healthHandler.removeCallbacks(healthUpdate);
         if (healthView != null) healthHandler.post(healthUpdate);
         healthHandler.removeCallbacks(performanceUpdate);
@@ -216,8 +219,14 @@ public class GameActivity extends SDLActivity {
     protected void onPause() {
         healthHandler.removeCallbacks(healthUpdate);
         healthHandler.removeCallbacks(performanceUpdate);
-        nativeSetVirtualGamepadState(0, 0, 0);
+        if(virtualGamepadView!=null)virtualGamepadView.releaseAll();
+        nativeSetVirtualGamepadStateV2(0,0,0,0,0,0,0);
         super.onPause();
+    }
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if(!focused && virtualGamepadView!=null)virtualGamepadView.releaseAll();
     }
 
     @Override
@@ -230,7 +239,8 @@ public class GameActivity extends SDLActivity {
         healthHandler.removeCallbacks(performanceUpdate);
         if (performanceLog != null) try { performanceLog.close(); } catch (java.io.IOException ignored) { }
         if (frameLog != null) try { frameLog.close(); } catch (java.io.IOException ignored) { }
-        nativeSetVirtualGamepadState(0, 0, 0);
+        if(virtualGamepadView!=null)virtualGamepadView.releaseAll();
+        nativeSetVirtualGamepadStateV2(0,0,0,0,0,0,0);
         super.onDestroy();
         if (sIsoPfd != null) {
             try {
@@ -244,6 +254,7 @@ public class GameActivity extends SDLActivity {
     @Override
     public void loadLibraries() {
         DriverStore.Driver driver = new DriverStore(this).get(getIntent().getStringExtra("driver_id"));
+        driver.turnipMode = driver.kind.equals("turnip") ? GraphicsSettings.turnipMode(getIntent()) : 0;
         if (!driver.usable()) throw new UnsatisfiedLinkError("Driver incompatível: " + driver.reason());
         String error = DriverNative.configure(this, driver);
         if (!error.isEmpty()) throw new UnsatisfiedLinkError(error);

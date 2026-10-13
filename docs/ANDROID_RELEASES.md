@@ -36,7 +36,7 @@ The current release build uses the developer's local Android debug signing key. 
 
 - Tag: `v0.1.0`
 - Track: prerelease / experimental
-- APK: `mkvdcu-android-v0.1.0-alpha.1.apk`
+- APK: `mkvdcu-android-v0.1.0.apk`
 - ABI: `arm64-v8a`
 - Device status reported by the developer: playable on Snapdragon 8 Elite; reaches in-game on Exynos 1380.
 - Custom Vulkan drivers: partial experimental support for Mali and Adreno.
@@ -49,3 +49,9 @@ The current release build uses the developer's local Android debug signing key. 
 - [ ] Device results and unresolved issues are written in the release notes.
 - [ ] APK and SHA-256 sidecar are attached to the GitHub prerelease.
 - [ ] Downloaded release asset hash matches the local hash.
+
+## v0.1.1 prerelease
+
+versionName `0.1.1`, versionCode `2`. Complete customizable Xbox 360 touch controls and new icon; Turnip Auto/Sysmem/GMEM selection with per-mode verification/caches; verification of selected Qualcomm ELF/helpers; periodic native pipeline-cache snapshot/IO in a background worker.
+
+Normal and optional diagnostic APKs use the same package ID/signing key. Native-library provenance and ARM64/Gradle builds passed. No new Snapdragon FPS or physical Turnip validation is claimed. Known graphical/performance problems and experimental PanVK support remain.

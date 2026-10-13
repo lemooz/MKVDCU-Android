@@ -809,7 +809,7 @@ index 0000000..5c18985
 +REX_HEALTH_API int RenderAreaBenchmarkOverride();
 +}
 diff --git a/include/rex/graphics/vulkan/pipeline_cache.h b/include/rex/graphics/vulkan/pipeline_cache.h
-index 7b938b9..57c6e9f 100644
+index 7b938b9..2b15729 100644
 --- a/include/rex/graphics/vulkan/pipeline_cache.h
 +++ b/include/rex/graphics/vulkan/pipeline_cache.h
 @@ -11,6 +11,7 @@
@@ -820,7 +820,15 @@ index 7b938b9..57c6e9f 100644
  #include <condition_variable>
  #include <cstddef>
  #include <cstdio>
-@@ -201,7 +202,8 @@ class VulkanPipelineCache {
+@@ -18,6 +19,7 @@
+ #include <deque>
+ #include <filesystem>
+ #include <functional>
++#include <future>
+ #include <memory>
+ #include <mutex>
+ #include <queue>
+@@ -201,7 +203,8 @@ class VulkanPipelineCache {
      PipelineRenderTarget render_targets[xenos::kMaxColorRenderTargets];
  
      // Including all the padding, for a stable hash.
@@ -830,7 +838,7 @@ index 7b938b9..57c6e9f 100644
      PipelineDescription() {
        Reset();
      }
-@@ -238,13 +240,15 @@ class VulkanPipelineCache {
+@@ -238,13 +241,15 @@ class VulkanPipelineCache {
      // destroyed by it while the pipeline cache is active.
      std::atomic<const PipelineLayoutProvider*> pipeline_layout{nullptr};
      std::atomic<bool> is_placeholder{false};
@@ -847,7 +855,7 @@ index 7b938b9..57c6e9f 100644
      Pipeline& operator=(const Pipeline& other) {
        if (this == &other) {
          return *this;
-@@ -254,6 +258,8 @@ class VulkanPipelineCache {
+@@ -254,6 +259,8 @@ class VulkanPipelineCache {
                              std::memory_order_release);
        is_placeholder.store(other.is_placeholder.load(std::memory_order_acquire),
                             std::memory_order_release);
@@ -856,7 +864,7 @@ index 7b938b9..57c6e9f 100644
        return *this;
      }
    };
-@@ -416,6 +422,11 @@ class VulkanPipelineCache {
+@@ -416,6 +423,11 @@ class VulkanPipelineCache {
    // shader interlock when no Xenos pixel shader provided.
    VkShaderModule depth_only_fragment_shader_ = VK_NULL_HANDLE;
    VkShaderModule placeholder_pixel_shader_ = VK_NULL_HANDLE;
@@ -868,7 +876,7 @@ index 7b938b9..57c6e9f 100644
    // Depth-only shaders for float24 emulation when no Xenos pixel shader is
    // provided in host render target mode.
    VkShaderModule depth_float24_truncate_fragment_shader_ = VK_NULL_HANDLE;
-@@ -443,6 +454,14 @@ class VulkanPipelineCache {
+@@ -443,6 +455,16 @@ class VulkanPipelineCache {
    // Pipeline storage output stream, for preload in the next emulator runs.
    FILE* pipeline_storage_file_ = nullptr;
    bool pipeline_storage_file_flush_needed_ = false;
@@ -877,6 +885,8 @@ index 7b938b9..57c6e9f 100644
 +  VkPipelineCache native_driver_cache_ = VK_NULL_HANDLE;
 +  std::filesystem::path native_driver_cache_path_;
 +  std::atomic<bool> native_driver_cache_dirty_{false};
++  std::future<void> native_driver_cache_save_;
++  void WriteNativeDriverCache();
 +  uint64_t native_driver_cache_saved_ms_ = 0;
 +  void InitializeNativeDriverCache(const std::filesystem::path& path);
 +  void SaveNativeDriverCache(bool force);
@@ -5219,7 +5229,7 @@ index b49e033..4705c47 100644
 +
  }  // namespace rex::graphics::vulkan
 diff --git a/src/graphics/vulkan/pipeline_cache.cpp b/src/graphics/vulkan/pipeline_cache.cpp
-index 91ac08f..3f2ed62 100644
+index 91ac08f..d84e5d0 100644
 --- a/src/graphics/vulkan/pipeline_cache.cpp
 +++ b/src/graphics/vulkan/pipeline_cache.cpp
 @@ -14,6 +14,8 @@
@@ -5394,7 +5404,7 @@ index 91ac08f..3f2ed62 100644
    uint32_t logical_processor_count = rex::thread::logical_processor_count();
    if (!logical_processor_count) {
      logical_processor_count = 6;
-@@ -383,11 +518,90 @@ bool VulkanPipelineCache::Initialize() {
+@@ -383,11 +518,121 @@ bool VulkanPipelineCache::Initialize() {
        creation_thread->set_name("Vulkan Pipelines");
        creation_threads_.push_back(std::move(creation_thread));
      }
@@ -5450,12 +5460,42 @@ index 91ac08f..3f2ed62 100644
 +}
 +
 +void VulkanPipelineCache::SaveNativeDriverCache(bool force) {
++  // One writer at most. Never join a live writer on the command processor
++  // thread during gameplay. Shutdown joins before destroying its VkDevice/cache.
++  if (native_driver_cache_save_.valid()) {
++    if (!force && native_driver_cache_save_.wait_for(std::chrono::seconds(0)) !=
++                      std::future_status::ready) return;
++    native_driver_cache_save_.get();
++  }
 +  if (native_driver_cache_ == VK_NULL_HANDLE || native_driver_cache_path_.empty()) return;
 +  const uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
 +      std::chrono::steady_clock::now().time_since_epoch()).count();
 +  if (!force && now - native_driver_cache_saved_ms_ < 30000) return;
 +  if (!native_driver_cache_dirty_.exchange(false, std::memory_order_relaxed)) return;
 +  native_driver_cache_saved_ms_ = now;
++  if (force) {
++    WriteNativeDriverCache();
++  } else {
++    try {
++      native_driver_cache_save_ = std::async(std::launch::async, [this] {
++        try { WriteNativeDriverCache(); }
++        catch (const std::exception& error) {
++          native_driver_cache_dirty_.store(true);
++          REXGPU_WARN("[PIPELINE_CACHE] background save failed: {}", error.what());
++        }
++      });
++    } catch (const std::exception& error) {
++      native_driver_cache_dirty_.store(true);
++      REXGPU_WARN("[PIPELINE_CACHE] unable to start writer: {}", error.what());
++    }
++  }
++}
++
++void VulkanPipelineCache::WriteNativeDriverCache() {
++  // The cache is created without EXTERNALLY_SYNCHRONIZED. Vulkan synchronizes
++  // pipeline creation internally. A changing size may return VK_INCOMPLETE;
++  // retain dirty state and retry later, never publish a partial snapshot.
++  const auto started = std::chrono::steady_clock::now();
 +  const auto* device = command_processor_.GetVulkanDevice();
 +  const auto& f = device->functions();
 +  size_t size = 0;
@@ -5478,14 +5518,15 @@ index 91ac08f..3f2ed62 100644
 +    native_driver_cache_dirty_.store(true);
 +    REXGPU_WARN("[PIPELINE_CACHE] native save failed: {}", ec.message());
 +  } else {
-+    REXGPU_INFO("[PIPELINE_CACHE] native saved bytes={}", size);
++    REXGPU_INFO("[PIPELINE_CACHE] native saved bytes={} serialization_io_ms={:.3f}", size,
++        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
 +  }
 +}
 +
  void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
                                                    uint32_t title_id, bool blocking) {
    ShutdownShaderStorage();
-@@ -416,8 +630,24 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& c
+@@ -416,8 +661,24 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& c
    std::vector<PipelineStoredDescription> pipeline_stored_descriptions;
    // <Shader hash, modification bits>.
    std::set<std::pair<uint64_t, uint64_t>> shader_translations_needed;
@@ -5511,7 +5552,7 @@ index 91ac08f..3f2ed62 100644
        fmt::format("{:08X}.{}.vk.xpso", title_id, edram_fragment_shader_interlock ? "fsi" : "fbo");
    pipeline_storage_file_ = rex::filesystem::OpenFile(pipeline_storage_file_path, "a+b");
    if (!pipeline_storage_file_) {
-@@ -427,6 +657,9 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& c
+@@ -427,6 +688,9 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& c
          rex::path_to_utf8(pipeline_storage_file_path));
      return;
    }
@@ -5521,7 +5562,7 @@ index 91ac08f..3f2ed62 100644
    pipeline_storage_file_flush_needed_ = false;
    // 'XEPS'.
    const uint32_t pipeline_storage_magic = 0x53504558;
-@@ -512,6 +745,7 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& c
+@@ -512,6 +776,7 @@ void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& c
      pipeline_storage_file_ = nullptr;
      return;
    }
@@ -5529,7 +5570,7 @@ index 91ac08f..3f2ed62 100644
    ++shader_storage_index_;
    shader_storage_file_flush_needed_ = false;
    struct {
-@@ -789,6 +1023,7 @@ void VulkanPipelineCache::EndSubmission() {
+@@ -789,6 +1054,7 @@ void VulkanPipelineCache::EndSubmission() {
    }
  
    ProcessDeferredPipelineDestructions(false);
@@ -5537,7 +5578,7 @@ index 91ac08f..3f2ed62 100644
  }
  
  void VulkanPipelineCache::Shutdown() {
-@@ -816,6 +1051,14 @@ void VulkanPipelineCache::Shutdown() {
+@@ -816,6 +1082,14 @@ void VulkanPipelineCache::Shutdown() {
    }
    creation_completion_event_.reset();
  
@@ -5552,7 +5593,7 @@ index 91ac08f..3f2ed62 100644
    ShutdownShaderStorage();
  
    const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
-@@ -843,6 +1086,13 @@ void VulkanPipelineCache::Shutdown() {
+@@ -843,6 +1117,13 @@ void VulkanPipelineCache::Shutdown() {
                                           depth_float24_round_fragment_shader_);
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyShaderModule, device,
                                           placeholder_pixel_shader_);
@@ -5566,7 +5607,7 @@ index 91ac08f..3f2ed62 100644
    if (tessellation_indexed_vertex_shader_ != VK_NULL_HANDLE) {
      dfn.vkDestroyShaderModule(device, tessellation_indexed_vertex_shader_, nullptr);
      tessellation_indexed_vertex_shader_ = VK_NULL_HANDLE;
-@@ -1234,6 +1484,7 @@ void VulkanPipelineCache::GetPipelineAndLayoutByHandle(
+@@ -1234,6 +1515,7 @@ void VulkanPipelineCache::GetPipelineAndLayoutByHandle(
  
  bool VulkanPipelineCache::TranslateAnalyzedShader(SpirvShaderTranslator& translator,
                                                    VulkanShader::VulkanTranslation& translation) {
@@ -5574,7 +5615,7 @@ index 91ac08f..3f2ed62 100644
    VulkanShader& shader = static_cast<VulkanShader&>(translation.shader());
  
    // Perform translation.
-@@ -1242,10 +1493,22 @@ bool VulkanPipelineCache::TranslateAnalyzedShader(SpirvShaderTranslator& transla
+@@ -1242,10 +1524,22 @@ bool VulkanPipelineCache::TranslateAnalyzedShader(SpirvShaderTranslator& transla
      REXGPU_ERROR("Shader {:016X} translation failed; marking as ignored", shader.ucode_data_hash());
      return false;
    }
@@ -5597,7 +5638,7 @@ index 91ac08f..3f2ed62 100644
    // TODO(Triang3l): Log that the shader has been successfully translated in
    // common code.
  
-@@ -3008,13 +3271,48 @@ bool VulkanPipelineCache::TryGetPipelineCreationArgumentsForDescription(
+@@ -3008,13 +3302,48 @@ bool VulkanPipelineCache::TryGetPipelineCreationArgumentsForDescription(
  
  bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments& creation_arguments,
                                                  VkShaderModule fragment_shader_override) {
@@ -5647,7 +5688,7 @@ index 91ac08f..3f2ed62 100644
        return true;
      }
    }
-@@ -3390,6 +3688,13 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
+@@ -3390,6 +3719,13 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
          color_blend_attachment.colorWriteMask = VkColorComponentFlags(color_rt.color_write_mask);
        }
      }
@@ -5661,7 +5702,7 @@ index 91ac08f..3f2ed62 100644
      color_blend_state.attachmentCount = 32 - rex::lzcnt(color_rts_used);
      color_blend_state.pAttachments = color_blend_attachments;
    }
-@@ -3480,7 +3785,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
+@@ -3480,7 +3816,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
    const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
    const VkDevice device = vulkan_device->device();
    VkPipeline pipeline;
@@ -5670,7 +5711,7 @@ index 91ac08f..3f2ed62 100644
                                                           &pipeline_create_info, nullptr, &pipeline);
    if (create_result != VK_SUCCESS) {
      uint64_t ps_hash = creation_arguments.pixel_shader
-@@ -3497,17 +3802,46 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
+@@ -3497,17 +3833,46 @@ bool VulkanPipelineCache::EnsurePipelineCreated(const PipelineCreationArguments&
          uint32_t(use_dynamic_rendering));
      return false;
    }
@@ -8908,10 +8949,10 @@ index 0000000..a9c946d
 +}  // namespace rex
 diff --git a/src/ui/vulkan/android_driver.cpp b/src/ui/vulkan/android_driver.cpp
 new file mode 100644
-index 0000000..1100707
+index 0000000..d6a3b60
 --- /dev/null
 +++ b/src/ui/vulkan/android_driver.cpp
-@@ -0,0 +1,372 @@
+@@ -0,0 +1,427 @@
 +#include <rex/ui/vulkan/android_driver.h>
 +#include <rex/ui/vulkan/instance.h>
 +#include <rex/ui/vulkan/device.h>
@@ -8925,6 +8966,7 @@ index 0000000..1100707
 +#include <dlfcn.h>
 +#include <mutex>
 +#include <filesystem>
++#include <fstream>
 +#include <sstream>
 +#include <iomanip>
 +#include <cstring>
@@ -8953,6 +8995,7 @@ index 0000000..1100707
 +bool frozen = false;
 +bool loaded_direct_icd = false;
 +bool disable_lossy_afrc = false;
++int turnip_mode = 0;
 +std::string JString(JNIEnv* env, jstring s) {
 +  if (!s) return {};
 +  const char* chars = env->GetStringUTFChars(s, nullptr);
@@ -8967,6 +9010,17 @@ index 0000000..1100707
 +  direct_icd = kind == "panvk";
 +  if (frozen) { direct_icd = loaded_direct_icd; return proc_addr; }
 +  frozen = true;
++  if (kind == "turnip") {
++    // Driver options are fixed before any Mesa constructor or Vulkan instance.
++    // Never enable flushall/syncdraw: those serialize each draw. Auto leaves
++    // Turnip's own choice intact; forced modes are explicit comparison options.
++    const char* option = turnip_mode == 1 ? "sysmem" : turnip_mode == 2 ? "gmem" : "";
++    if (setenv("TU_DEBUG", option, 1) || unsetenv("TU_DEBUG_FILE")) {
++      error = "Falha ao configurar o modo Turnip";
++      return nullptr;
++    }
++    REXLOG_INFO("[DRIVER] Turnip render mode={} TU_DEBUG='{}'", turnip_mode, option);
++  }
 +  // Mesa reads options at library initialization. Keep cache / precision
 +  // configuration local to this dedicated process and set it before dlopen.
 +  if (kind == "panvk" || kind == "turnip") {
@@ -9126,6 +9180,7 @@ index 0000000..1100707
 +      << '-' << p.driverVersion << '-';
 +  for (auto b : p.pipelineCacheUUID) out << std::setw(2) << std::setfill('0') << unsigned(b);
 +  out << "-renderer-20261013-loader5";
++  if (kind == "turnip" || kind == "adreno") out << "-adreno6-tumode" << turnip_mode;
 +  return out.str();
 +}
 +void AndroidDriverRecordDevice(const VkPhysicalDeviceProperties& p) {
@@ -9133,6 +9188,7 @@ index 0000000..1100707
 +  identity = p.deviceName + std::string(" / ") + reported_driver + " / " + std::to_string(p.driverVersion) +
 +      " / " + kind + (kind == "system" ? "" : "/" + package_id.substr(0, 12));
 +  if (kind == "panvk" && PanvkNativeSyncEnabled()) identity += " / native-fence CPU";
++  if (kind == "turnip") identity += turnip_mode == 1 ? " / Sysmem" : turnip_mode == 2 ? " / GMEM" : " / Auto";
 +  REXLOG_INFO("[DRIVER] actual={} vendor=0x{:X} device=0x{:X}", identity, p.vendorID, p.deviceID);
 +}
 +bool AndroidDriverCheckDevice(const VulkanInstance& instance, VkPhysicalDevice physical) {
@@ -9195,6 +9251,34 @@ index 0000000..1100707
 +  Dl_info origin{};
 +  const bool identified = draw && dladdr(reinterpret_cast<const void*>(draw), &origin) && origin.dli_fname;
 +  REXLOG_INFO("[DRIVER] vkCmdDraw dispatch={}", identified ? origin.dli_fname : "unavailable");
++  // Confirm the selected ELF too: a system Mesa driver may also report Turnip.
++  // Merely seeing the right driverID is not proof that this package was loaded.
++  bool selected_mapped = false;
++  if (kind == "adreno" || kind == "turnip") {
++    const auto selected = (std::filesystem::path(directory) / library).string();
++    std::error_code selected_error;
++    const auto selected_path = std::filesystem::weakly_canonical(selected, selected_error);
++    std::ifstream maps("/proc/self/maps");
++    std::string line;
++    while (std::getline(maps, line)) {
++      const auto path = line.find('/');
++      if (path != std::string::npos && !selected_error) {
++        std::error_code mapped_error;
++        const auto mapped = std::filesystem::weakly_canonical(line.substr(path), mapped_error);
++        if (!mapped_error && mapped == selected_path) {
++          selected_mapped = true;
++          break;
++        }
++      }
++    }
++    if (!selected_mapped) {
++      error = "O ELF do pacote Qualcomm selecionado não está mapeado; loader usou outro driver";
++      REXLOG_ERROR("[DRIVER] {}", error);
++      return false;
++    }
++    REXLOG_INFO("[DRIVER] selected ELF mapped={} dispatch={}", selected,
++                identified ? origin.dli_fname : "opaque");
++  }
 +  // Non-Turnip Qualcomm packages have no portable driver ID distinguishing
 +  // them from the OEM fallback. Require the real draw entrypoint to originate
 +  // in the selected ELF. Reject an opaque loader/layer trampoline rather than
@@ -9203,7 +9287,17 @@ index 0000000..1100707
 +    std::error_code actual_error, expected_error;
 +    const auto actual = identified ? std::filesystem::weakly_canonical(origin.dli_fname, actual_error) : std::filesystem::path{};
 +    const auto expected = std::filesystem::weakly_canonical(std::filesystem::path(directory) / library, expected_error);
-+    if (!identified || actual_error || expected_error || actual != expected) {
++    bool matches = identified && !actual_error && !expected_error && actual == expected;
++    // Some Qualcomm packages split their implementation into DT_NEEDED helpers.
++    // Accept only helpers validated by ElfDriver's reachable dependency graph,
++    // and only after confirming the selected root ELF is mapped in this process.
++    for (const auto& dependency : dependencies) {
++      std::error_code dependency_error;
++      const auto helper = std::filesystem::weakly_canonical(
++          std::filesystem::path(directory) / dependency, dependency_error);
++      if (selected_mapped && identified && !actual_error && !dependency_error && actual == helper) matches = true;
++    }
++    if (!matches) {
 +      error = "Não foi possível confirmar execução do pacote Adreno selecionado (fallback ou trampoline)";
 +      REXLOG_ERROR("[DRIVER] {}", error);
 +      return false;
@@ -9215,7 +9309,7 @@ index 0000000..1100707
 +extern "C" JNIEXPORT jstring JNICALL
 +Java_org_mkvdcu_android_DriverNative_configure(JNIEnv* env, jclass, jstring jkind,
 +    jstring jdir, jstring jlibrary, jstring jhooks, jstring jtmp, jstring jid,
-+    jstring jcache, jobjectArray jdependencies, jboolean jdisable_lossy_afrc) {
++    jstring jcache, jobjectArray jdependencies, jboolean jdisable_lossy_afrc, jint jturnip_mode) {
 +  std::lock_guard lock(mutex);
 +  if (frozen) return env->NewStringUTF("O driver já está inicializado; reinicie a sessão");
 +  const auto candidate_kind = JString(env, jkind);
@@ -9226,6 +9320,8 @@ index 0000000..1100707
 +      candidate_lib.find('/') != std::string::npos || candidate_lib.find('\\') != std::string::npos))
 +    return env->NewStringUTF("Nome de biblioteca inválido");
 +  kind = candidate_kind;
++  if (jturnip_mode < 0 || jturnip_mode > 2) return env->NewStringUTF("Modo Turnip inválido");
++  turnip_mode = kind == "turnip" ? jturnip_mode : 0;
 +  disable_lossy_afrc = kind == "panvk" && jdisable_lossy_afrc;
 +  directory = JString(env, jdir); library = candidate_lib;
 +  hooks = JString(env, jhooks); temporary = JString(env, jtmp); package_id = JString(env, jid);

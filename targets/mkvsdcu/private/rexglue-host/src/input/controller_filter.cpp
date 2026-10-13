@@ -75,9 +75,28 @@ struct PadRecord {
 };
 std::mutex g_pads_mutex;
 std::map<uint64_t, PadRecord> g_pads;
-std::atomic<uint16_t> g_virtual_buttons{0};
-std::atomic<int16_t> g_virtual_lx{0};
-std::atomic<int16_t> g_virtual_ly{0};
+// Publish all seven channels as one coherent input sample. Independent atomics
+// can otherwise mix the previous button sample with new triggers/stick axes.
+std::mutex g_virtual_mutex;
+X_INPUT_GAMEPAD g_virtual_state{};
+
+uint64_t VirtualKeystrokeBits(const X_INPUT_GAMEPAD& state) {
+  uint64_t bits=static_cast<uint16_t>(state.buttons);
+  if(state.left_trigger>kTriggerPressThreshold)bits|=UINT64_C(1)<<16;
+  if(state.right_trigger>kTriggerPressThreshold)bits|=UINT64_C(1)<<17;
+  auto direction=[&](int16_t x,int16_t y,unsigned shift) {
+    constexpr int threshold=16384;
+    int d=-1;
+    if(y>threshold)d=x < -threshold ? 4 : x > threshold ? 5 : 0;
+    else if(y < -threshold)d=x > threshold ? 6 : x < -threshold ? 7 : 1;
+    else if(x>threshold)d=2;
+    else if(x < -threshold)d=3;
+    if(d>=0)bits|=UINT64_C(1)<<(shift+unsigned(d));
+  };
+  direction(state.thumb_lx,state.thumb_ly,18);
+  direction(state.thumb_rx,state.thumb_ry,26);
+  return bits;
+}
 
 class VirtualTouchGamepadDriver final : public InputDriver {
  public:
@@ -99,10 +118,10 @@ class VirtualTouchGamepadDriver final : public InputDriver {
     const bool enabled = is_active();
     X_INPUT_GAMEPAD state{};
     if (enabled) {
-      state.buttons = g_virtual_buttons.load(std::memory_order_relaxed);
-      state.thumb_lx = g_virtual_lx.load(std::memory_order_relaxed);
-      state.thumb_ly = g_virtual_ly.load(std::memory_order_relaxed);
+      std::lock_guard lock(g_virtual_mutex);
+      state=g_virtual_state;
     }
+    std::lock_guard state_lock(state_mutex_);
     if (std::memcmp(&last_state_, &state, sizeof(state)) != 0) {
       last_state_ = state;
       ++packet_;
@@ -117,7 +136,7 @@ class VirtualTouchGamepadDriver final : public InputDriver {
     std::memset(out_caps, 0, sizeof(*out_caps));
     out_caps->type = 0x01;
     out_caps->sub_type = 0x01;
-    out_caps->gamepad.buttons = 0xFFFF;
+    out_caps->gamepad.buttons = 0xF7FF;
     out_caps->gamepad.left_trigger = 0xFF;
     out_caps->gamepad.right_trigger = 0xFF;
     out_caps->gamepad.thumb_lx = out_caps->gamepad.thumb_ly = 0x7FFF;
@@ -129,13 +148,33 @@ class VirtualTouchGamepadDriver final : public InputDriver {
   X_RESULT GetDeviceKeystroke(DeviceId, uint32_t, X_INPUT_KEYSTROKE* out) override {
     if (!out) return X_ERROR_BAD_ARGUMENTS;
 
-    static constexpr std::pair<uint16_t, rex::ui::VirtualKey> kKeys[] = {
+    static constexpr std::pair<uint64_t, rex::ui::VirtualKey> kKeys[] = {
         {X_INPUT_GAMEPAD_DPAD_UP, rex::ui::VirtualKey::kXInputPadDpadUp},
         {X_INPUT_GAMEPAD_DPAD_DOWN, rex::ui::VirtualKey::kXInputPadDpadDown},
         {X_INPUT_GAMEPAD_DPAD_LEFT, rex::ui::VirtualKey::kXInputPadDpadLeft},
         {X_INPUT_GAMEPAD_DPAD_RIGHT, rex::ui::VirtualKey::kXInputPadDpadRight},
         {X_INPUT_GAMEPAD_START, rex::ui::VirtualKey::kXInputPadStart},
         {X_INPUT_GAMEPAD_BACK, rex::ui::VirtualKey::kXInputPadBack},
+        {X_INPUT_GAMEPAD_LEFT_THUMB, rex::ui::VirtualKey::kXInputPadLThumbPress},
+        {X_INPUT_GAMEPAD_RIGHT_THUMB, rex::ui::VirtualKey::kXInputPadRThumbPress},
+        {UINT64_C(1)<<16, rex::ui::VirtualKey::kXInputPadLTrigger},
+        {UINT64_C(1)<<17, rex::ui::VirtualKey::kXInputPadRTrigger},
+        {UINT64_C(1)<<18, rex::ui::VirtualKey::kXInputPadLThumbUp},
+        {UINT64_C(1)<<19, rex::ui::VirtualKey::kXInputPadLThumbDown},
+        {UINT64_C(1)<<20, rex::ui::VirtualKey::kXInputPadLThumbRight},
+        {UINT64_C(1)<<21, rex::ui::VirtualKey::kXInputPadLThumbLeft},
+        {UINT64_C(1)<<22, rex::ui::VirtualKey::kXInputPadLThumbUpLeft},
+        {UINT64_C(1)<<23, rex::ui::VirtualKey::kXInputPadLThumbUpRight},
+        {UINT64_C(1)<<24, rex::ui::VirtualKey::kXInputPadLThumbDownRight},
+        {UINT64_C(1)<<25, rex::ui::VirtualKey::kXInputPadLThumbDownLeft},
+        {UINT64_C(1)<<26, rex::ui::VirtualKey::kXInputPadRThumbUp},
+        {UINT64_C(1)<<27, rex::ui::VirtualKey::kXInputPadRThumbDown},
+        {UINT64_C(1)<<28, rex::ui::VirtualKey::kXInputPadRThumbRight},
+        {UINT64_C(1)<<29, rex::ui::VirtualKey::kXInputPadRThumbLeft},
+        {UINT64_C(1)<<30, rex::ui::VirtualKey::kXInputPadRThumbUpLeft},
+        {UINT64_C(1)<<31, rex::ui::VirtualKey::kXInputPadRThumbUpRight},
+        {UINT64_C(1)<<32, rex::ui::VirtualKey::kXInputPadRThumbDownRight},
+        {UINT64_C(1)<<33, rex::ui::VirtualKey::kXInputPadRThumbDownLeft},
         {X_INPUT_GAMEPAD_LEFT_SHOULDER, rex::ui::VirtualKey::kXInputPadLShoulder},
         {X_INPUT_GAMEPAD_RIGHT_SHOULDER, rex::ui::VirtualKey::kXInputPadRShoulder},
         {X_INPUT_GAMEPAD_A, rex::ui::VirtualKey::kXInputPadA},
@@ -145,7 +184,9 @@ class VirtualTouchGamepadDriver final : public InputDriver {
     };
 
     std::lock_guard lock(keystroke_mutex_);
-    const uint16_t current = g_virtual_buttons.load(std::memory_order_relaxed);
+    X_INPUT_GAMEPAD sample{};
+    if(is_active()){std::lock_guard state_lock(g_virtual_mutex);sample=g_virtual_state;}
+    const uint64_t current=VirtualKeystrokeBits(sample);
     for (const auto& [button, key] : kKeys) {
       const bool was_down = (keystroke_buttons_ & button) != 0;
       const bool is_down = (current & button) != 0;
@@ -161,7 +202,7 @@ class VirtualTouchGamepadDriver final : public InputDriver {
       } else {
         keystroke_buttons_ &= ~button;
       }
-      REXLOG_INFO("[VIRTUAL_PAD][KEYSTROKE] vk=0x{:04X} flags=0x{:04X} buttons=0x{:04X}",
+      REXLOG_INFO("[VIRTUAL_PAD][KEYSTROKE] vk=0x{:04X} flags=0x{:04X} keys=0x{:X}",
                   static_cast<uint16_t>(key), static_cast<uint16_t>(out->flags), current);
       return X_ERROR_SUCCESS;
     }
@@ -170,9 +211,10 @@ class VirtualTouchGamepadDriver final : public InputDriver {
 
  private:
   X_INPUT_GAMEPAD last_state_{};
+  std::mutex state_mutex_;
   uint32_t packet_ = 0;
   std::mutex keystroke_mutex_;
-  uint16_t keystroke_buttons_ = 0;
+  uint64_t keystroke_buttons_ = 0;
 };
 
 int ControlIndex(const std::string& name) {
@@ -451,12 +493,17 @@ std::vector<PadSnapshot> ConnectedPads() {
   return pads;
 }
 
-void SetVirtualGamepadState(uint16_t buttons, int16_t thumb_lx, int16_t thumb_ly) {
+void SetVirtualGamepadState(uint16_t buttons,int16_t thumb_lx,int16_t thumb_ly,
+                           int16_t thumb_rx,int16_t thumb_ry,
+                           uint8_t left_trigger,uint8_t right_trigger) {
   static std::atomic<uint16_t> logged_buttons{0xFFFF};
   static std::atomic<uint32_t> logged_axes{std::numeric_limits<uint32_t>::max()};
-  g_virtual_buttons.store(buttons, std::memory_order_relaxed);
-  g_virtual_lx.store(thumb_lx, std::memory_order_relaxed);
-  g_virtual_ly.store(thumb_ly, std::memory_order_relaxed);
+  {
+    std::lock_guard lock(g_virtual_mutex);
+    g_virtual_state.buttons=buttons;g_virtual_state.thumb_lx=thumb_lx;g_virtual_state.thumb_ly=thumb_ly;
+    g_virtual_state.thumb_rx=thumb_rx;g_virtual_state.thumb_ry=thumb_ry;
+    g_virtual_state.left_trigger=left_trigger;g_virtual_state.right_trigger=right_trigger;
+  }
   // Quantize stick diagnostics to avoid per-motion log spam. Pack unsigned
   // halves so negative axes never undergo an undefined signed left shift.
   const uint32_t qx = static_cast<uint16_t>(static_cast<int32_t>(thumb_lx) / 4096);
@@ -464,8 +511,13 @@ void SetVirtualGamepadState(uint16_t buttons, int16_t thumb_lx, int16_t thumb_ly
   const uint32_t axes = (qx << 16) | qy;
   const bool buttons_changed = logged_buttons.exchange(buttons, std::memory_order_relaxed) != buttons;
   const bool axes_changed = logged_axes.exchange(axes, std::memory_order_relaxed) != axes;
-  if (buttons_changed || (axes_changed && buttons == 0)) {
-    REXLOG_INFO("[VIRTUAL_PAD] buttons=0x{:04X} lx={} ly={}", buttons, thumb_lx, thumb_ly);
+  static std::atomic<uint32_t> logged_extra{0};
+  const uint32_t extra=(uint32_t(left_trigger)<<24)|(uint32_t(right_trigger)<<16)|
+      (uint32_t(uint8_t(int32_t(thumb_rx)/4096))<<8)|uint8_t(int32_t(thumb_ry)/4096);
+  const bool extra_changed=logged_extra.exchange(extra,std::memory_order_relaxed)!=extra;
+  if (buttons_changed || axes_changed || extra_changed) {
+    REXLOG_INFO("[VIRTUAL_PAD] buttons=0x{:04X} lx={} ly={} rx={} ry={} lt={} rt={}",
+                buttons,thumb_lx,thumb_ly,thumb_rx,thumb_ry,left_trigger,right_trigger);
   }
 }
 

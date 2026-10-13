@@ -16,6 +16,7 @@ final class GraphicsSettings {
     static final int[] GPU_TIMING = {64, 0, 1};
     static final int[] PIPELINE_THREADS = {-1, 1, 2, 4};
     private static final String PREFIX = "graphics_";
+    static final String[] TURNIP_MODES = {"Automático (padrão do driver)", "Sysmem (experimental)", "GMEM (experimental)"};
     private final SharedPreferences prefs;
     GraphicsSettings(Context context) { prefs = context.getSharedPreferences("mkvdcu", Context.MODE_PRIVATE); }
     int filter() { return allowed(prefs.getInt(PREFIX + "filter", -1), FILTERS, -1); }
@@ -26,6 +27,9 @@ final class GraphicsSettings {
     boolean batch() { return prefs.getBoolean(PREFIX + "batch", false); }
     boolean gpuStages() { return prefs.getBoolean(PREFIX + "gpu_stages", false); }
     int pipelineThreads() { return allowed(prefs.getInt(PREFIX + "pipeline_threads", -1), PIPELINE_THREADS, -1); }
+    int turnipMode() { return allowed(prefs.getInt(PREFIX + "turnip_mode", 0), new int[]{0, 1, 2}, 0); }
+    void setTurnipMode(int value) { prefs.edit().putInt(PREFIX + "turnip_mode", allowed(value, new int[]{0, 1, 2}, 0)).apply(); }
+    static int turnipMode(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "turnip_mode", 0), new int[]{0, 1, 2}, 0); }
     void setPipelineThreads(int value) { prefs.edit().putInt(PREFIX + "pipeline_threads", allowed(value, PIPELINE_THREADS, -1)).apply(); }
     void setGpuStages(boolean value) { prefs.edit().putBoolean(PREFIX + "gpu_stages", value).apply(); }
     int videoMode() { return allowed(prefs.getInt(PREFIX + "video_mode", 0), new int[]{0, 1, 2}, 0); }
@@ -44,7 +48,7 @@ final class GraphicsSettings {
         prefs.edit().remove(PREFIX + "filter").remove(PREFIX + "cache_mb")
             .remove(PREFIX + "ssa").remove(PREFIX + "render_area").remove(PREFIX + "sustained").remove(PREFIX + "mip_drop")
             .remove(PREFIX + "batch").remove(PREFIX + "video_mode").remove(PREFIX + "gpu_timing").remove(PREFIX + "pipeline_threads")
-            .remove(PREFIX + "gpu_stages").apply();
+            .remove(PREFIX + "gpu_stages").remove(PREFIX + "turnip_mode").apply();
     }
     void attach(Intent intent) {
         intent.putExtra(PREFIX + "filter", filter()).putExtra(PREFIX + "cache_mb", cacheMb())
@@ -52,7 +56,7 @@ final class GraphicsSettings {
             .putExtra(PREFIX + "sustained", sustained()).putExtra(PREFIX + "mip_drop", mipDrop())
             .putExtra(PREFIX + "batch", batch()).putExtra(PREFIX + "video_mode", videoMode())
             .putExtra(PREFIX + "gpu_timing", gpuTiming()).putExtra(PREFIX + "gpu_stages", gpuStages())
-            .putExtra(PREFIX + "pipeline_threads", pipelineThreads());
+            .putExtra(PREFIX + "pipeline_threads", pipelineThreads()).putExtra(PREFIX + "turnip_mode", turnipMode());
     }
     static boolean sustained(Intent intent) { return intent.getBooleanExtra(PREFIX + "sustained", false); }
     static void appendArguments(Intent intent, List<String> args) {
@@ -93,7 +97,7 @@ final class GraphicsSettings {
             "; gpu_timing_interval=" + allowed(intent.getIntExtra(PREFIX + "gpu_timing", 64), GPU_TIMING, 64) +
             "; gpu_stages=" + intent.getBooleanExtra(PREFIX + "gpu_stages", false) +
             "; pipeline_creation_threads=" + allowed(intent.getIntExtra(PREFIX + "pipeline_threads", -1), PIPELINE_THREADS, -1) +
-            "; render_area_revision=deferred_union_1";
+            "; turnip_mode=" + turnipMode(intent) + "; render_area_revision=deferred_union_1";
     }
     private static int allowed(int value, int[] choices, int fallback) {
         for (int choice : choices) if (value == choice) return value;

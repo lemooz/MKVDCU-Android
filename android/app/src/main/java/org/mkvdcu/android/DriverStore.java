@@ -12,17 +12,19 @@ import java.util.zip.*;
 
 /** Imported drivers are executable native code, kept entirely in app-private storage. */
 final class DriverStore {
-    static final int PROBE_VERSION = 202610134;
+    static final int PROBE_VERSION = 202610135;
     private static final long MAX_ARCHIVE = 128L * 1024 * 1024;
     private static final long MAX_EXPANDED = 256L * 1024 * 1024;
     private final Context context;
     private final File root;
     static final class Driver {
         String id, kind, name, version, library, packageIssue = "";
-        int minApi;
+        int minApi, turnipMode;
         File directory;
         JSONObject metadata, report;
         String reason() {
+            if (kind.equals("turnip") && report != null && report.optInt("turnipMode", -1) != turnipMode)
+                return "Verifique novamente o driver com o modo Turnip selecionado";
             if (minApi > Build.VERSION.SDK_INT) return "Requer Android API " + minApi;
             if (!packageIssue.isEmpty()) return packageIssue;
             if (report == null || report.optInt("probeVersion") != PROBE_VERSION ||
@@ -49,6 +51,7 @@ final class DriverStore {
         }
         boolean usable() {
             return kind.equals("system") || (packageIssue.isEmpty() && minApi <= Build.VERSION.SDK_INT && report != null &&
+                (!kind.equals("turnip") || report.optInt("turnipMode", -1) == turnipMode) &&
                 report.optInt("probeVersion") == PROBE_VERSION &&
                 report.optInt("androidApi") == Build.VERSION.SDK_INT &&
                 report.optString("buildFingerprint").equals(Build.FINGERPRINT) && report.optBoolean("ok"));
@@ -92,6 +95,7 @@ final class DriverStore {
         d.name = meta.getString("name"); d.version = meta.optString("packageVersion", "?");
         d.library = meta.getString("libraryName"); d.minApi = meta.getInt("minApi");
         d.kind = GpuDriverKind.classify(d.name, meta.optString("backend"), d.library, meta.optString("vendor"));
+        d.turnipMode = d.kind.equals("turnip") ? new GraphicsSettings(context).turnipMode() : 0;
         if (d.kind.equals("unknown")) d.packageIssue = "Backend não identificado: use um pacote PanVK, Turnip ou Qualcomm Adreno com metadados correspondentes";
         d.metadata = meta;
         try { ElfDriver.loadOrder(folder, d.library); }

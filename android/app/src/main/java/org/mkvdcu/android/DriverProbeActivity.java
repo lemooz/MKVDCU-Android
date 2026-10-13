@@ -43,6 +43,7 @@ public final class DriverProbeActivity extends Activity implements SurfaceHolder
                     }
                 };
                 DriverStore.Driver driver = new DriverStore(this).get(getIntent().getStringExtra("driver_id"));
+                driver.turnipMode = driver.kind.equals("turnip") ? GraphicsSettings.turnipMode(getIntent()) : 0;
                 String error = DriverNative.configure(this, driver);
                 if (!error.isEmpty()) throw new IllegalStateException(error);
                 result = DriverNative.probe(holder.getSurface());
@@ -57,6 +58,8 @@ public final class DriverProbeActivity extends Activity implements SurfaceHolder
     }
     private void finishResult(String report) {
         if (isFinishing()) return;
+        try { report = new JSONObject(report).put("turnipMode", GraphicsSettings.turnipMode(getIntent())).toString(); }
+        catch (Exception ignored) { }
         handler.removeCallbacksAndMessages(null);
         setResult(RESULT_OK, new Intent().putExtra("driver_report", report));
         finish();

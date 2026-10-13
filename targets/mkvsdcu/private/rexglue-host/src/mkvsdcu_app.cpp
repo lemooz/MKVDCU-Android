@@ -396,4 +396,12 @@ Java_org_mkvdcu_android_GameActivity_nativeSetVirtualGamepadState(JNIEnv*, jclas
                                      static_cast<int16_t>(thumb_lx),
                                      static_cast<int16_t>(thumb_ly));
 }
+extern "C" JNIEXPORT void JNICALL
+Java_org_mkvdcu_android_GameActivity_nativeSetVirtualGamepadStateV2(JNIEnv*,jclass,jint buttons,
+    jint lx,jint ly,jint rx,jint ry,jint lt,jint rt) {
+  auto axis=[](jint v){return static_cast<int16_t>(std::clamp(v,jint(-32767),jint(32767)));};
+  port_input::SetVirtualGamepadState(static_cast<uint16_t>(buttons),axis(lx),axis(ly),axis(rx),axis(ry),
+      static_cast<uint8_t>(std::clamp(lt,jint(0),jint(255))),
+      static_cast<uint8_t>(std::clamp(rt,jint(0),jint(255))));
+}
 #endif

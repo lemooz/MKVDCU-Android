@@ -71,6 +71,7 @@ def main():
                     raise ValueError('Game duplicates runtime ImGui state')
                 required = {'SDL_main',
                             'Java_org_mkvdcu_android_GameActivity_nativeSetVirtualGamepadState',
+                            'Java_org_mkvdcu_android_GameActivity_nativeSetVirtualGamepadStateV2',
                             'Java_org_mkvdcu_android_GameActivity_nativeReadHealthSnapshot',
                             'Java_org_mkvdcu_android_GameActivity_nativeReadFrameIntervals',
                             'Java_org_mkvdcu_android_GameActivity_nativeReadPerformanceSnapshot'}

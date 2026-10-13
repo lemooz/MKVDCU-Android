@@ -198,7 +198,7 @@ public class MainActivity extends Activity {
     private void showSettings() {
         String[] items = {"Drivers Vulkan", "Importar driver ZIP / .adpkg.zip",
                 "Diagnóstico: " + (prefs.diagnostics() ? "ativado" : "desativado"), "Gráficos e desempenho",
-                "Exportar métricas da última sessão", "Exportar frametimes da última sessão"};
+                "Exportar métricas da última sessão", "Exportar frametimes da última sessão", "Controle na tela — personalizar"};
         new AlertDialog.Builder(this)
                 .setTitle("Configurações")
                 .setItems(items, (dialog, which) -> {
@@ -210,6 +210,7 @@ public class MainActivity extends Activity {
                     }
                     if (which == 2) { prefs.setDiagnostics(!prefs.diagnostics()); showSettings(); }
                     if (which == 3) showGraphicsSettings();
+                    if (which == 6) startActivity(new Intent(this,GamepadEditorActivity.class));
                     if (which == 4 || which == 5) {
                         Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/csv")
                                 .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,
@@ -238,7 +239,8 @@ public class MainActivity extends Activity {
             "Agrupar submissões experimental: " + (graphics.batch() ? "ativado" : "desativado"),
             "Medição GPU: " + (graphics.gpuTiming() == 0 ? "desativada" : "uma a cada " + graphics.gpuTiming() + " submissões"),
             "Perfil GPU por etapa: " + (graphics.gpuStages() ? "amostrado 1/64" : "desativado"),
-            "Compiladores de pipelines: " + (graphics.pipelineThreads() < 0 ? "automático" : graphics.pipelineThreads())};
+            "Compiladores de pipelines: " + (graphics.pipelineThreads() < 0 ? "automático" : graphics.pipelineThreads()),
+            "Turnip — modo de renderização: " + GraphicsSettings.TURNIP_MODES[graphics.turnipMode()]};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) new AlertDialog.Builder(this).setTitle("Resolução interna")
@@ -326,6 +328,11 @@ public class MainActivity extends Activity {
                             graphics.setPipelineThreads(GraphicsSettings.PIPELINE_THREADS[w]); d.dismiss(); showGraphicsSettings();
                         }).setNegativeButton("Cancelar", null).show();
                 }
+                if (which == 13) new AlertDialog.Builder(this).setTitle("Turnip — próxima sessão")
+                    .setMessage("Somente para driver Turnip importado. Automático mantém a escolha do driver; Sysmem evita o binning em tiles; GMEM força tiles. O melhor modo depende da GPU e da cena. Exige verificar novamente o pacote no gerenciador de drivers. Não afeta o driver do sistema nem PanVK.")
+                    .setSingleChoiceItems(GraphicsSettings.TURNIP_MODES, graphics.turnipMode(), (d, w) -> {
+                        graphics.setTurnipMode(w); d.dismiss(); showGraphicsSettings();
+                    }).setNegativeButton("Cancelar", null).show();
             }).setPositiveButton("Fechar", null).show();
     }
 
@@ -416,6 +423,7 @@ public class MainActivity extends Activity {
         };
         Intent probe = new Intent(this, DriverProbeActivity.class).putExtra("driver_id", id)
                 .putExtra("probe_receiver", receiver);
+        new GraphicsSettings(this).attach(probe);
         startActivityForResult(probe, REQ_PROBE_DRIVER);
         driverHandler.postDelayed(() -> {
             if (probePid != 0 && probePid != android.os.Process.myPid()) android.os.Process.killProcess(probePid);
