@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible issue with the Android port
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not attach game files, copyrighted assets, signing keys, or private personal data."
+  - type: input
+    id: device
+    attributes:
+      label: Phone model and SoC
+      placeholder: "For example, Galaxy A54 — Exynos 1380"
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android version
+    validations:
+      required: true
+  - type: input
+    id: apk
+    attributes:
+      label: APK version
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: Vulkan driver and version
+      placeholder: System driver or imported package name/version
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps and observed result
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true

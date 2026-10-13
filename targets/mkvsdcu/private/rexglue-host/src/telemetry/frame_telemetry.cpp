@@ -3,17 +3,26 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <sstream>
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#else
+#include <dlfcn.h>
+#include <cstdio>
+#endif
 
+#include <rex/types.h>
 #include <rex/graphics/xenos.h>
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
+#include <rex/diagnostics/health.h>
 
 namespace {
 constexpr size_t kHistory = 2048;  // ~34 s at 60 FPS
@@ -22,6 +31,7 @@ std::atomic<uint64_t> g_swap_count{0};
 std::atomic<uint32_t> g_output_width{0};
 std::atomic<uint32_t> g_output_height{0};
 
+#if defined(_WIN32)
 int64_t Now() {
   LARGE_INTEGER counter;
   QueryPerformanceCounter(&counter);
@@ -36,6 +46,17 @@ double TicksPerMs() {
   }();
   return value;
 }
+#else
+int64_t Now() {
+  return std::chrono::duration_cast<std::chrono::nanoseconds>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+double TicksPerMs() {
+  return 1000000.0;
+}
+#endif
 
 void RecordSwap(PPCContext& ctx, uint8_t* base) {
   // Only the game's render thread calls VdSwap, so there is a single writer.
@@ -49,12 +70,13 @@ void RecordSwap(PPCContext& ctx, uint8_t* base) {
   rex::graphics::xenos::xe_gpu_texture_fetch_t fetch;
   const auto* words = reinterpret_cast<const uint32_t*>(base + fetch_address);
   uint32_t* out = reinterpret_cast<uint32_t*>(&fetch);
-  for (int i = 0; i < 6; ++i) out[i] = _byteswap_ulong(words[i]);
+  for (int i = 0; i < 6; ++i) out[i] = rex::byte_swap(words[i]);
   g_output_width.store(fetch.size_2d.width + 1, std::memory_order_relaxed);
   g_output_height.store(fetch.size_2d.height + 1, std::memory_order_relaxed);
 }
 
 PPCFunc* RuntimeVdSwap() {
+#if defined(_WIN32)
   HMODULE runtime = GetModuleHandleW(L"rexruntime.dll");
   auto* function = runtime ? reinterpret_cast<PPCFunc*>(GetProcAddress(runtime, "__imp__VdSwap"))
                            : nullptr;
@@ -64,6 +86,19 @@ PPCFunc* RuntimeVdSwap() {
     std::abort();
   }
   return function;
+#else
+  void* runtime = dlopen("librexruntime.so", RTLD_NOLOAD | RTLD_LAZY);
+  if (!runtime) {
+    runtime = dlopen("librexruntime.so", RTLD_LAZY);
+  }
+  auto* function = runtime ? reinterpret_cast<PPCFunc*>(dlsym(runtime, "__imp__VdSwap"))
+                           : reinterpret_cast<PPCFunc*>(dlsym(RTLD_DEFAULT, "__imp__VdSwap"));
+  if (!function) {
+    fprintf(stderr, "librexruntime.so does not export __imp__VdSwap. Rebuild the game.\n");
+    std::abort();
+  }
+  return function;
+#endif
 }
 }  // namespace
 
@@ -71,15 +106,31 @@ PPCFunc* RuntimeVdSwap() {
 // here takes precedence over the import library, so every frame passes
 // through the telemetry before reaching the runtime's implementation.
 extern "C" REX_FUNC(__imp__VdSwap) {
+  rex::diagnostics::HealthScope scope("VdSwap", ctx.lr);
+  rex::diagnostics::HealthRecord(rex::diagnostics::HealthEvent::SwapEnter);
   static PPCFunc* const runtime_vd_swap = RuntimeVdSwap();
   RecordSwap(ctx, base);
   runtime_vd_swap(ctx, base);
+  rex::diagnostics::HealthRecord(rex::diagnostics::HealthEvent::SwapReturn);
 }
 
 namespace telemetry {
 
 uint64_t GuestFrameCount() {
   return g_swap_count.load(std::memory_order_acquire);
+}
+
+std::string FrameIntervalsCsv(uint64_t after_frame) {
+  const uint64_t count = GuestFrameCount();
+  std::ostringstream out;
+  out << count << '\n';
+  const uint64_t oldest = count >= kHistory ? count - kHistory + 1 : 1;
+  for (uint64_t i = std::max(oldest, after_frame); i < count; ++i) {
+    const auto a = g_swap_ticks[(i - 1) % kHistory].load(std::memory_order_relaxed);
+    const auto b = g_swap_ticks[i % kHistory].load(std::memory_order_relaxed);
+    if (b >= a) out << i + 1 << ',' << double(b - a) / TicksPerMs() << '\n';
+  }
+  return out.str();
 }
 
 GuestOutputSize LastGuestOutputSize() {
@@ -141,6 +192,8 @@ FrameStats ComputeFrameStats(double window_seconds) {
     const size_t index = std::min(intervals.size() - 1, size_t(std::ceil(p * intervals.size())) - 1);
     return intervals[index];
   };
+  stats.median_ms = percentile(0.5);
+  stats.p95_ms = percentile(0.95);
   stats.p99_ms = percentile(0.99);
   stats.p999_ms = percentile(0.999);
   const double median = intervals[intervals.size() / 2];

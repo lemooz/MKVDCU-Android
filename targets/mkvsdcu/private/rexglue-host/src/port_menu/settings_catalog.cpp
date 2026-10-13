@@ -3,12 +3,14 @@
 #include <algorithm>
 #include <thread>
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <Windows.h>
 #include <dxgi1_4.h>
 #include <wrl/client.h>
+#endif
 
 #include <rex/cvar.h>
 
@@ -21,16 +23,19 @@ using Kind = Setting::Kind;
 constexpr Apply kLive = Apply::kLive;
 constexpr Apply kRestart = Apply::kRestart;
 
+#if defined(_WIN32)
 std::string Narrow(const wchar_t* text) {
   const int size = WideCharToMultiByte(CP_UTF8, 0, text, -1, nullptr, 0, nullptr, nullptr);
   std::string result(size > 0 ? size - 1 : 0, '\0');
   if (size > 1) WideCharToMultiByte(CP_UTF8, 0, text, -1, result.data(), size, nullptr, nullptr);
   return result;
 }
+#endif
 
 // d3d12_adapter counts DXGI adapters in enumeration order.
 std::vector<Choice> AdapterChoices() {
   std::vector<Choice> choices = {{"-1", "Automatic"}};
+#if defined(_WIN32)
   Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
   if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return choices;
   Microsoft::WRL::ComPtr<IDXGIAdapter1> adapter;
@@ -40,6 +45,7 @@ std::vector<Choice> AdapterChoices() {
     if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
     choices.push_back({std::to_string(i), Narrow(desc.Description)});
   }
+#endif
   return choices;
 }
 
@@ -69,6 +75,7 @@ std::vector<Choice> EffectChoices() {
   return choices;
 }
 
+#if defined(_WIN32)
 BOOL CALLBACK CountMonitor(HMONITOR, HDC, LPRECT, LPARAM data) {
   ++*reinterpret_cast<int*>(data);
   return TRUE;
@@ -81,6 +88,11 @@ std::vector<Choice> MonitorChoices() {
   for (int i = 2; i <= count; ++i) choices.push_back({std::to_string(i), "Display " + std::to_string(i)});
   return choices;
 }
+#else
+std::vector<Choice> MonitorChoices() {
+  return {{"0", "Automatic"}, {"1", "Primary"}};
+}
+#endif
 
 std::vector<Choice> ThreadChoices() {
   std::vector<Choice> choices = {{"-1", "Automatic"}};
@@ -254,6 +266,18 @@ std::vector<Group> Build() {
       {"clear_memory_page_state", "Memory coherency", "Off can show stale data.", kLive,
        Kind::kBool},
   }});
+
+#if defined(__ANDROID__)
+  groups.push_back({"ADVANCED", "EULA COLOR DIAGNOSTIC", {
+      {"android_debug_eula_probe_stage", "EULA shader probe",
+       "Diagnostic APK starts at vertex RGB (alpha=1); select 0 for normal rendering or 2/3 to test PS/exponent.",
+       kRestart, Kind::kChoice,
+       {{"0", "Normal game rendering"},
+        {"1", "Interpolated vertex RGB (alpha forced to 1; probe default)"},
+        {"2", "Game pixel shader before color exponent"},
+        {"3", "Game pixel shader after color exponent"}}},
+  }});
+#endif
 
   groups.push_back({"ADVANCED", "RENDERER", {
       {"render_target_path_d3d12", "Render targets", "Rasterizer-ordered views are exact but slow.",

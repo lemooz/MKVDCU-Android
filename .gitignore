@@ -25,6 +25,20 @@
 /references/*
 !/references/rexglue-sdk/
 /dist/
+/android/.gradle/
+/android/local.properties
+/android/**/build/
+/android/app/src/main/jniLibs/**/*.so
+/android/native-build/
+/android/app/src/main/assets/game/
+/android/app/src/main/assets/*.xex
+/android/app/src/main/assets/*.iso
+/android/app/src/main/assets/*.xbe
+/android/app/src/main/assets/*.rom
+/android/app/src/main/assets/*.bin
+/android/app/src/main/assets/*.pak
+/android/app/src/main/assets/*.dat
+/android/app/src/main/assets/*.zip
 /build/
 /switch/toolchain-test/build/
 /CMakeUserPresets.json
@@ -38,6 +52,7 @@ __pycache__/
 
 #Gatekeeping ts (only the guides the launcher links to are public)
 /docs/*
+!/docs/ANDROID_RELEASES.md
 !/docs/GETTING_STARTED.md
 !/docs/TROUBLESHOOTING.md
 !/docs/MODDING.md

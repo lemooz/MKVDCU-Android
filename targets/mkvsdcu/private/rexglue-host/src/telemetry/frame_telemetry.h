@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <string>
 
 // Timing of the frames the game itself presents, measured at its VdSwap call.
 // This is the game's real frame rate, independent of how often the host
@@ -15,6 +16,8 @@ struct FrameStats {
   double avg_ms = 0;
   double min_ms = 0;
   double max_ms = 0;
+  double median_ms = 0;
+  double p95_ms = 0;
   double p99_ms = 0;   // 1% of frames were slower than this
   double p999_ms = 0;  // 0.1%
   double stddev_ms = 0;
@@ -31,6 +34,8 @@ struct GuestOutputSize {
 FrameStats ComputeFrameStats(double window_seconds);
 GuestOutputSize LastGuestOutputSize();
 uint64_t GuestFrameCount();
+// First line is the publication cursor; following rows are frame ID, interval ms.
+std::string FrameIntervalsCsv(uint64_t after_frame);
 
 // Most recent frame intervals in milliseconds, oldest first.
 void RecentFrameTimes(std::vector<float>& out, size_t max_count);

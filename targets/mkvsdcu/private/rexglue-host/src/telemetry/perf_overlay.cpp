@@ -1,4 +1,7 @@
 #include "perf_overlay.h"
+#if defined(__ANDROID__)
+#include <rex/ui/vulkan/android_driver.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -210,6 +213,9 @@ void PerfOverlay::OnDraw(ImGuiIO& io) {
 
 void PerfOverlay::DrawCompact(const telemetry::FrameStats& frames,
                               const telemetry::SystemSnapshot& system) {
+#if defined(__ANDROID__)
+  ImGui::TextUnformatted(rex::ui::vulkan::AndroidDriverIdentity().c_str());
+#endif
   const double target = TargetFps(system);
   const telemetry::FrameStats now = telemetry::ComputeFrameStats(1.0);
   ImGui::TextColored(FpsColor(now.fps, target), "%.0f FPS", now.fps);
@@ -234,6 +240,17 @@ void PerfOverlay::DrawCompact(const telemetry::FrameStats& frames,
     ImGui::TextColored(kLabel, "%ux%u %dx", size.width, size.height, ScaleSetting());
   }
   telemetry::RecentFrameTimes(frame_times_, 180);
+#if defined(__ANDROID__)
+  const int gpu_timing_interval = rex::cvar::Query<int32_t>("vulkan_gpu_timing_interval");
+  if (gpu_timing_interval > 0 && system.gpu_submission_ms >= 0)
+    ImGui::Text("GPU / submit sampled 1/%d: %.2f ms", gpu_timing_interval, system.gpu_submission_ms);
+  else ImGui::Text("GPU / submit: %s", gpu_timing_interval > 0 ? "indisponivel (sem amostra recente)" : "desativado");
+  const int aniso = rex::cvar::Query<int32_t>("anisotropic_override");
+  const int mip_drop = rex::cvar::Query<int32_t>("vulkan_texture_mip_drop");
+  if (aniso < 0) ImGui::Text("AF config: game   DXT mip minimum: +%d", mip_drop);
+  else if (aniso == 0) ImGui::Text("AF config: off   DXT mip minimum: +%d", mip_drop);
+  else ImGui::Text("AF config: %ux   DXT mip minimum: +%d", 1u << std::clamp(aniso - 1, 0, 4), mip_drop);
+#endif
   DrawFrameTimeGraph(frame_times_, ImGui::GetContentRegionAvail().x > 200
                                        ? ImGui::GetContentRegionAvail().x
                                        : 360.0f,

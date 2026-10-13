@@ -12,6 +12,8 @@
 // guest function (sub_XXXXXXXX) or a runtime/system symbol. Used to find
 // spin-waits and hot guest code worth replacing with native implementations.
 namespace telemetry {
+void RequestAndroidCpuProfile();
+bool ConsumeAndroidCpuProfileRequest();
 
 struct ProfileEntry {
   std::string location;  // "guest sub_82345678" or "rexruntime.dll!Symbol"

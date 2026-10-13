@@ -1,0 +1,72 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Set MKVDCU_ANDROID_BUILD_DIR when the workspace needs build intermediates
+// outside the source tree; otherwise use Gradle's normal app/build directory.
+def externalBuildDir = System.getenv('MKVDCU_ANDROID_BUILD_DIR')
+if (externalBuildDir) {
+    buildDir = file(externalBuildDir)
+}
+
+android {
+    namespace 'org.mkvdcu.android'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "org.mkvdcu.android"
+        minSdk 28
+        targetSdk 34
+        versionCode 1
+        versionName "0.1.0"
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    signingConfigs {
+        debug {
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+            buildConfigField 'boolean', 'DIAGNOSTIC_DEFAULT', 'true'
+        }
+        release {
+            debuggable false
+            buildConfigField 'boolean', 'DIAGNOSTIC_DEFAULT', 'false'
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            signingConfig signingConfigs.debug
+        }
+        diagnostic {
+            initWith release
+            debuggable true
+            buildConfigField 'boolean', 'DIAGNOSTIC_DEFAULT', 'true'
+        }
+    }
+    buildFeatures { buildConfig true }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // Packaged native game runtime (libmkvdcu.so) if present.
+    sourceSets {
+        main {
+            jniLibs.srcDirs = ['src/main/jniLibs']
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}

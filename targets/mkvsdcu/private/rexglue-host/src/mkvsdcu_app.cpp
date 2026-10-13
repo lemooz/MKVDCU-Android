@@ -3,20 +3,36 @@
 
 #include <imgui.h>
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
+#include <thread>
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <Windows.h>
+#endif
 
 #include <rex/cvar.h>
+#include <rex/filesystem.h>
+#include <rex/filesystem/entry.h>
+#include <rex/filesystem/file.h>
+#include <rex/filesystem/vfs.h>
+#include <rex/logging.h>
 #include <rex/graphics/command_processor.h>
 #include <rex/graphics/graphics_system.h>
 #include <rex/input/input_system.h>
 #include <rex/system/gpu_plugin.h>
 #include <rex/system/xmemory.h>
+#include <rex/system/xtypes.h>
 #include <rex/ui/keybinds.h>
+
+#if defined(__ANDROID__)
+#include <jni.h>
+#endif
+
+using rex::X_STATUS;
 
 #include "host_tweaks.h"
 #include "input/controller_filter.h"
@@ -40,6 +56,7 @@ void MkvsdcuApp::OnConfigurePaths(rex::PathConfig& paths) {
 // Developer aid: MKVDCU_DUMP_IMAGE=<file> writes the loaded XEX image so
 // indirect-call targets can be found offline (scripts/find-function-seeds.py).
 void MkvsdcuApp::OnPostLoadXexImage() {
+#if defined(_WIN32)
   wchar_t path[MAX_PATH];
   if (!GetEnvironmentVariableW(L"MKVDCU_DUMP_IMAGE", path, MAX_PATH)) return;
   constexpr uint32_t kImageBase = 0x82000000, kImageSize = 0x01130000;
@@ -48,14 +65,24 @@ void MkvsdcuApp::OnPostLoadXexImage() {
     fwrite(image, 1, kImageSize, file);
     fclose(file);
   }
+#endif
 }
 
 void MkvsdcuApp::OnPreSetup(rex::RuntimeConfig& config) {
   // Load the GPU plugin ourselves to pick its backend. If that backend is not
   // compiled in, ReXApp falls back to loading the plugin's default.
   const std::string plugin = rex::cvar::GetFlagByName("gpu_plugin");
+  const std::string backend = host_tweaks::GpuBackend();
+  REXLOG_INFO("[MKVDCU][GPU] OnPreSetup: gpu_plugin='{}' backend='{}' graphics_already_set={}",
+              plugin, backend, config.graphics != nullptr);
   if (!config.graphics && !plugin.empty()) {
-    config.graphics = rex::system::LoadGpuPlugin(plugin, host_tweaks::GpuBackend());
+    config.graphics = rex::system::LoadGpuPlugin(plugin, backend);
+    REXLOG_INFO("[MKVDCU][GPU] LoadGpuPlugin('{}','{}') -> {}", plugin, backend,
+                config.graphics ? "SUCCESS" : "FAIL (nullptr)");
+  }
+  if (!config.graphics) {
+    REXLOG_ERROR("[MKVDCU][GPU] No graphics system configured - game will run headless (audio/logic "
+                 "only, black screen expected)");
   }
   // The host framebuffer path omits fighting surfaces in this title. Use
   // exact EDRAM depth/stencil emulation for Automatic Vulkan render targets.
@@ -74,6 +101,17 @@ void MkvsdcuApp::OnPreSetup(rex::RuntimeConfig& config) {
   // The plugin registers its scale cvars when loaded. Set both axes before
   // the graphics system allocates render targets and translates shaders.
   host_tweaks::ApplyRenderMode();
+  rex::cvar::SetFlagByName("depth_float24_convert_in_pixel_shader", "true");
+  {
+    const auto scale = host_tweaks::RenderScale();
+    REXLOG_INFO("[MKVDCU][GPU] render_mode='{}' scale={}x{} resolution_scale={} "
+                "draw_scale_x={} draw_scale_y={} depth_float24_convert_in_pixel_shader={}",
+                rex::cvar::GetFlagByName("port_render_mode"), scale.first, scale.second,
+                rex::cvar::GetFlagByName("resolution_scale"),
+                rex::cvar::GetFlagByName("draw_resolution_scale_x"),
+                rex::cvar::GetFlagByName("draw_resolution_scale_y"),
+                rex::cvar::GetFlagByName("depth_float24_convert_in_pixel_shader"));
+  }
 
   config.input_factory = [this](bool tool_mode) -> std::unique_ptr<rex::system::IInputSystem> {
     return port_input::CreateInputSystem(tool_mode, [this] {
@@ -83,8 +121,13 @@ void MkvsdcuApp::OnPreSetup(rex::RuntimeConfig& config) {
 }
 
 void MkvsdcuApp::OnConfigureFonts(ImFontAtlas* atlas) {
+#if defined(_WIN32)
   const char* font = "C:\\Windows\\Fonts\\bahnschrift.ttf";
   if (std::filesystem::exists(font)) port_font_ = atlas->AddFontFromFileTTF(font, 18.0f);
+#else
+  const char* font = "/system/fonts/Roboto-Regular.ttf";
+  if (std::filesystem::exists(font)) port_font_ = atlas->AddFontFromFileTTF(font, 18.0f);
+#endif
 }
 
 void MkvsdcuApp::OnConfigureStyle(ImGuiStyle& style, rex::ui::Style&) {
@@ -132,6 +175,89 @@ void MkvsdcuApp::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
 }
 
 void MkvsdcuApp::OnPostSetup() {
+#ifdef __ANDROID__
+  // TEMPORARY: dump the whole D:\ tree the ISO parser extracted. The game
+  // boots but every D:\ content open fails - find out what D:\ contains.
+  {
+    auto* fs = runtime() ? runtime()->file_system() : nullptr;
+    auto* root = fs ? fs->ResolvePath("d:\\") : nullptr;
+    REXLOG_INFO("[VFS] d:\\ root -> {}", root ? "FOUND" : "MISSING");
+    if (root) {
+      struct Dumper {
+        static void Run(const rex::filesystem::Entry* e, int depth, size_t& budget) {
+          if (!e || !budget) return;
+          std::string indent(size_t(depth) * 2, ' ');
+          REXLOG_INFO("[VFS] {}{} ({} children)", indent, e->name(), e->child_count());
+          if (!--budget) return;
+          for (const auto& c : e->children()) {
+            Run(c.get(), depth + 1, budget);
+            if (!budget) return;
+          }
+        }
+      };
+      size_t budget = 3000;
+      Dumper::Run(root, 0, budget);
+      REXLOG_INFO("[VFS] dump done, budget left={}", budget);
+      // TEMPORARY: also write the tree to pullable storage (logcat rotates).
+      if (FILE* f = fopen("/data/local/tmp/mkvdcu_vfs_tree.txt", "w")) {
+        struct FileDumper {
+          static void Run(FILE* f, const rex::filesystem::Entry* e, int depth, size_t& budget) {
+            if (!e || !budget) return;
+            std::string indent(size_t(depth) * 2, ' ');
+            fprintf(f, "%s%s (%zu children)\n", indent.c_str(), e->name().c_str(),
+                    e->child_count());
+            if (!--budget) return;
+            for (const auto& c : e->children()) {
+              Run(f, c.get(), depth + 1, budget);
+              if (!budget) return;
+            }
+          }
+        };
+        size_t fbudget = 3000;
+        FileDumper::Run(f, root, 0, fbudget);
+        fclose(f);
+      }
+      // Bounded open-probe: prove whether D:\ content can actually be opened
+      // and read (not just enumerated). Limited to the first 20 root children
+      // plus a few well-known paths, so logcat stays usable.
+      const size_t kMaxProbes = 20;
+      size_t probed = 0;
+      for (const auto& child : root->children()) {
+        if (probed >= kMaxProbes) break;
+        const bool is_dir =
+            (child->attributes() & rex::filesystem::kFileAttributeDirectory) != 0;
+        REXLOG_INFO("[MKVDCU][VFS] VFS_OPEN probe={} size={} attrs=0x{:X} dir={}", child->name(),
+                    child->size(), child->attributes(), is_dir ? "yes" : "no");
+        if (!is_dir) {
+          rex::filesystem::File* file = nullptr;
+          const rex::X_STATUS status =
+              child->Open(rex::filesystem::FileAccess::kGenericRead, &file);
+          REXLOG_INFO("[MKVDCU][VFS] VFS_OPEN result={:08X} path={} size={}",
+                      static_cast<uint32_t>(status), child->name(), child->size());
+          if (status == X_STATUS_SUCCESS && file) {
+            uint8_t head[16] = {};
+            size_t bytes_read = 0;
+            const rex::X_STATUS rs =
+                file->ReadSync(std::span<uint8_t>(head, sizeof(head)), 0, &bytes_read);
+            uint32_t w = 0;
+            if (bytes_read >= 4) std::memcpy(&w, head, 4);
+            REXLOG_INFO("[MKVDCU][VFS] VFS_READ result={:08X} bytes={} head={:08X}",
+                        static_cast<uint32_t>(rs), bytes_read, w);
+            file->Destroy();
+          }
+        }
+        ++probed;
+      }
+      for (const char* alias : {"d:\\", "d:/", "game:\\", "game:/", "\\Device\\Harddisk0\\Partition1"}) {
+        auto* e = fs->ResolvePath(alias);
+        REXLOG_INFO("[MKVDCU][VFS] VFS_EXISTS alias='{}' -> {}", alias, e ? "FOUND" : "MISSING");
+      }
+    } else {
+      REXLOG_ERROR("[MKVDCU][VFS] d:\\ root MISSING - ISO not mounted or GDFX parse failed; "
+                   "graphics assets unreachable while audio/logic may continue");
+    }
+  }
+#endif
   sampler_ = std::make_unique<telemetry::SystemSampler>([this]() -> uint32_t {
     auto* graphics = static_cast<rex::graphics::GraphicsSystem*>(runtime()->graphics_system());
     auto* processor = graphics ? graphics->command_processor() : nullptr;
@@ -142,10 +268,31 @@ void MkvsdcuApp::OnPostSetup() {
   host_.mods_loaded = mod_overlay::Install(runtime()->file_system(), mod_overlay::EnabledMods());
   host_tweaks::Install();
   if (rex::cvar::Query<bool>("port_perf_csv")) sampler_->SetCsvLogging(true, host_.log_dir);
+#if defined(__ANDROID__)
+  auto_profile_ = std::thread([this] {
+    const int delay = rex::cvar::Query<int32_t>("port_profile_after");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(std::max(0, delay));
+    bool scheduled = delay > 0;
+    sampler_->SetWanted("auto-profile", true);
+    while (!stopping_) {
+      const bool requested = telemetry::ConsumeAndroidCpuProfileRequest();
+      if (requested || (scheduled && std::chrono::steady_clock::now() >= deadline)) {
+        scheduled = false;
+        std::vector<std::pair<uint32_t, std::string>> threads;
+        for (const auto& thread : sampler_->Latest().busiest_threads)
+          if (threads.size() < 4 && thread.core_percent >= 5) threads.emplace_back(thread.id, thread.name);
+        profiler_.Start(std::move(threads), 5.0, host_.log_dir);
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+  });
+#else
   if (const int delay = rex::cvar::Query<int32_t>("port_profile_after"); delay > 0) {
     sampler_->SetWanted("auto-profile", true);
     auto_profile_ = std::thread([this, delay] {
-      for (int i = 0; i < delay * 10 && !stopping_; ++i) Sleep(100);
+      for (int i = 0; i < delay * 10 && !stopping_; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
       if (stopping_) return;
       std::vector<std::pair<uint32_t, std::string>> threads;
       for (const auto& thread : sampler_->Latest().busiest_threads) {
@@ -154,6 +301,7 @@ void MkvsdcuApp::OnPostSetup() {
       profiler_.Start(std::move(threads), 5.0, host_.log_dir);
     });
   }
+#endif
 
   auto* input = static_cast<rex::input::InputSystem*>(runtime()->input_system());
   if (input) {
@@ -164,6 +312,12 @@ void MkvsdcuApp::OnPostSetup() {
   if (rex::cvar::Query<int32_t>("port_debug_menu_cycle") > 0) {
     app_context().CallInUIThreadDeferred([this] { OpenPortMenu(); });
   }
+#ifdef __ANDROID__
+  // Keep the frame-rate/readback HUD visible during device validation so a
+  // black or stalled game state can be distinguished from a dead presenter.
+  rex::cvar::SetFlagByName("port_perf_overlay", "true");
+  REXLOG_INFO("[MKVDCU][HUD] enabling Android performance overlay");
+#endif
   if (rex::cvar::Query<bool>("port_perf_overlay")) {
     app_context().CallInUIThreadDeferred([this] { ShowPerfOverlay(true); });
   }
@@ -208,6 +362,7 @@ PortWindowInfo MkvsdcuApp::WindowInfo() const {
 }
 
 void MkvsdcuApp::ResizeWindow(uint32_t width, uint32_t height) {
+#if defined(_WIN32)
   // Resizing from inside the overlay's paint would re-enter the presenter.
   app_context().CallInUIThreadDeferred([this, width, height] {
     auto* w = window();
@@ -227,4 +382,18 @@ void MkvsdcuApp::ResizeWindow(uint32_t width, uint32_t height) {
     const int y = work.top + std::max(0, int((work.bottom - work.top - outer_h) / 2));
     SetWindowPos(hwnd, nullptr, x, y, outer_w, outer_h, SWP_NOZORDER | SWP_NOACTIVATE);
   });
+#else
+  (void)width;
+  (void)height;
+#endif
 }
+
+#if defined(__ANDROID__)
+extern "C" JNIEXPORT void JNICALL
+Java_org_mkvdcu_android_GameActivity_nativeSetVirtualGamepadState(JNIEnv*, jclass, jint buttons,
+                                                                  jint thumb_lx, jint thumb_ly) {
+  port_input::SetVirtualGamepadState(static_cast<uint16_t>(buttons),
+                                     static_cast<int16_t>(thumb_lx),
+                                     static_cast<int16_t>(thumb_ly));
+}
+#endif

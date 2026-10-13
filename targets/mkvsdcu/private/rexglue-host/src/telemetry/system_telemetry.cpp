@@ -1,4 +1,4 @@
-﻿#include "system_telemetry.h"
+#include "system_telemetry.h"
 
 #include <algorithm>
 #include <chrono>
@@ -6,7 +6,15 @@
 #include <fstream>
 #include <map>
 #include <unordered_map>
+#include <sstream>
+#if defined(__ANDROID__)
+#include <unistd.h>
+#include <time.h>
+#include <rex/ui/vulkan/android_driver.h>
+#include <rex/diagnostics/performance.h>
+#endif
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -17,11 +25,14 @@
 #include <psapi.h>
 #include <tlhelp32.h>
 #include <wrl/client.h>
+#endif
 
 #include "frame_telemetry.h"
 
 namespace telemetry {
 namespace {
+
+#if defined(_WIN32)
 using Microsoft::WRL::ComPtr;
 
 uint64_t FileTimeValue(const FILETIME& time) {
@@ -48,6 +59,7 @@ std::string ThreadName(HANDLE thread) {
   LocalFree(description);
   return name;
 }
+#endif
 
 std::string CsvField(std::string text) {
   if (text.find_first_of(",\"") == std::string::npos) return text;
@@ -57,6 +69,7 @@ std::string CsvField(std::string text) {
 }
 }  // namespace
 
+#if defined(_WIN32)
 struct SystemSampler::Impl {
   uint32_t cores = 0;
   std::chrono::steady_clock::time_point last_time;
@@ -303,6 +316,121 @@ struct SystemSampler::Impl {
     csv.flush();
   }
 };
+#elif defined(__ANDROID__)
+struct SystemSampler::Impl {
+  bool primed = false;
+  std::mutex csv_mutex;
+  std::ofstream csv;
+  std::filesystem::path csv_file;
+  std::chrono::steady_clock::time_point csv_start, previous_time;
+  uint64_t previous_cpu_ns = 0;
+  uint32_t previous_vblank = 0;
+  uint64_t previous_swaps = 0;
+  std::unordered_map<uint32_t, uint64_t> previous_threads;
+  rex::diagnostics::PerformanceTotals previous_gpu{};
+
+  SystemSnapshot Sample(uint32_t vblank) {
+    SystemSnapshot out;
+    const auto now = std::chrono::steady_clock::now();
+    const double seconds = primed ? std::chrono::duration<double>(now - previous_time).count() : 0;
+    const long cores = sysconf(_SC_NPROCESSORS_ONLN);
+    out.logical_cores = uint32_t(std::max(1L, cores));
+    out.system_cpu_percent = -1;  // Android need not allow reading global /proc/stat.
+    out.gpu_name = rex::ui::vulkan::AndroidDriverIdentity();
+    const auto gpu = rex::diagnostics::ReadPerformance(rex::diagnostics::PerformanceStage::GpuSubmission);
+    if (gpu.count > previous_gpu.count && gpu.nanoseconds >= previous_gpu.nanoseconds)
+      out.gpu_submission_ms = double(gpu.nanoseconds - previous_gpu.nanoseconds) /
+          ((gpu.count - previous_gpu.count) * 1000000.0);
+    previous_gpu = gpu;
+    timespec cpu{};
+    if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu) != 0) return out;
+    const uint64_t cpu_ns = uint64_t(cpu.tv_sec) * 1000000000 + cpu.tv_nsec;
+    if (seconds > 0 && cpu_ns >= previous_cpu_ns) {
+      out.process_cpu_percent = 100.0 * double(cpu_ns - previous_cpu_ns) /
+          (seconds * 1e9 * out.logical_cores);
+      const uint64_t swaps = GuestFrameCount();
+      const double extra_vblanks = double(uint32_t(vblank - previous_vblank)) -
+          double(swaps - previous_swaps);
+      out.vblank_hz = std::max(0.0, extra_vblanks / seconds);
+      out.valid = true;
+    }
+    uint64_t total_pages = 0, resident_pages = 0;
+    std::ifstream statm("/proc/self/statm");
+    if (statm >> total_pages >> resident_pages)
+      out.working_set_bytes = resident_pages * uint64_t(sysconf(_SC_PAGESIZE));
+    const long ticks = sysconf(_SC_CLK_TCK);
+    std::unordered_map<uint32_t, uint64_t> current_threads;
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator("/proc/self/task", ec)) {
+      const auto filename = entry.path().filename().string();
+      if (filename.empty() || filename.find_first_not_of("0123456789") != std::string::npos) continue;
+      uint32_t tid = uint32_t(std::stoul(filename));
+      std::ifstream input(entry.path() / "stat");
+      std::string line;
+      if (!std::getline(input, line)) continue;
+      const auto begin = line.find('('), end = line.rfind(')');
+      if (begin == std::string::npos || end == std::string::npos || end <= begin) continue;
+      std::istringstream fields(line.substr(end + 2));
+      std::string field;
+      uint64_t user = 0, system = 0;
+      bool parsed = false;
+      for (int i = 0; i <= 12 && fields >> field; ++i) {
+        if (i == 11) user = std::strtoull(field.c_str(), nullptr, 10);
+        if (i == 12) { system = std::strtoull(field.c_str(), nullptr, 10); parsed = true; }
+      }
+      if (!parsed) continue;
+      const uint64_t time = user + system;
+      current_threads.emplace(tid, time);
+      const auto previous = previous_threads.find(tid);
+      if (seconds > 0 && ticks > 0 && previous != previous_threads.end() && time >= previous->second)
+        out.busiest_threads.push_back({tid, line.substr(begin + 1, end - begin - 1),
+            100.0 * double(time - previous->second) / (ticks * seconds)});
+    }
+    out.thread_count = uint32_t(current_threads.size());
+    std::sort(out.busiest_threads.begin(), out.busiest_threads.end(),
+              [](const ThreadLoad& a, const ThreadLoad& b) { return a.core_percent > b.core_percent; });
+    if (out.busiest_threads.size() > 8) out.busiest_threads.resize(8);
+    previous_threads = std::move(current_threads);
+    previous_time = now; previous_cpu_ns = cpu_ns; previous_vblank = vblank;
+    previous_swaps = GuestFrameCount(); primed = true;
+    return out;
+  }
+  void WriteCsv(const SystemSnapshot& s) {
+    std::lock_guard lock(csv_mutex);
+    if (!csv.is_open() || !s.valid) return;
+    const FrameStats f = ComputeFrameStats(1.0);
+    const auto size = LastGuestOutputSize();
+    const ThreadLoad top = s.busiest_threads.empty() ? ThreadLoad{} : s.busiest_threads.front();
+    const double seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - csv_start).count();
+    csv << seconds << ',' << f.fps << ',' << f.avg_ms << ',' << f.p99_ms << ',' << f.max_ms << ','
+        << f.stddev_ms << ',' << f.hitches << ',' << size.width << ',' << size.height << ','
+        << s.process_cpu_percent << ',' << s.system_cpu_percent << ',' << CsvField(top.name) << ','
+        << top.core_percent << ",-1,-1,0,0," << s.working_set_bytes / 1048576
+        << ",0," << s.vblank_hz << '\n';
+    csv.flush();
+  }
+};
+#else
+struct SystemSampler::Impl {
+  bool primed = false;
+  std::mutex csv_mutex;
+  std::ofstream csv;
+  std::filesystem::path csv_file;
+  std::chrono::steady_clock::time_point csv_start;
+
+  SystemSnapshot Sample(uint32_t vblank) {
+    SystemSnapshot out;
+    // Unsupported platforms must not report invented CPU values as measurements.
+    out.valid = false;
+    return out;
+  }
+
+  void WriteCsv(const SystemSnapshot& s) {
+    std::lock_guard lock(csv_mutex);
+  }
+};
+#endif
 
 SystemSampler::SystemSampler(std::function<uint32_t()> vblank_counter)
     : impl_(std::make_unique<Impl>()), vblank_counter_(std::move(vblank_counter)) {
@@ -344,7 +472,11 @@ std::filesystem::path SystemSampler::SetCsvLogging(bool enabled,
       std::filesystem::create_directories(directory, ec);
       const std::time_t now = std::time(nullptr);
       std::tm local = {};
+#if defined(_WIN32)
       localtime_s(&local, &now);
+#else
+      localtime_r(&now, &local);
+#endif
       char name[64];
       std::strftime(name, sizeof(name), "perf-%Y%m%d-%H%M%S.csv", &local);
       impl_->csv_file = directory / name;
@@ -370,7 +502,11 @@ std::filesystem::path SystemSampler::csv_path() const {
 }
 
 void SystemSampler::Run() {
+#if defined(_WIN32)
   SetThreadDescription(GetCurrentThread(), L"Port telemetry");
+#elif defined(__linux__) || defined(__ANDROID__)
+  pthread_setname_np(pthread_self(), "Port telemetry");
+#endif
   std::unique_lock lock(mutex_);
   while (!stop_) {
     if (reasons_.empty()) {

@@ -88,12 +88,16 @@ macro(rexglue_setup_target target_name)
         rexglue_apply_target_settings(${target_name}_recomp)
         rexglue_apply_recomp_settings(${target_name}_recomp
             "${REXGLUE_ENTRYPOINT_INCLUDE_DIR}/mkvsdcu_pch.h")
-        add_dependencies(${target_name}_recomp mkvsdcu_codegen)
+        if(TARGET mkvsdcu_codegen)
+            add_dependencies(${target_name}_recomp mkvsdcu_codegen)
+        endif()
         target_link_libraries(${target_name} PRIVATE
             ${target_name}_recomp)
     endif()
     # Also on the host, so a tree that has never run codegen still generates it.
-    add_dependencies(${target_name} mkvsdcu_codegen)
+    if(TARGET mkvsdcu_codegen)
+        add_dependencies(${target_name} mkvsdcu_codegen)
+    endif()
     target_include_directories(${target_name} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -114,6 +118,7 @@ endmacro()
 # codegen, including one a project assembles itself rather than taking the
 # library rexglue_setup_target() builds. The stamp comes first: the DEPFILE
 # names it.
+if(TARGET rex::rexglue)
 add_custom_command(
     OUTPUT "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.build.stamp"
            ${REXGLUE_ENTRYPOINT_GENERATED_SOURCES}
@@ -125,6 +130,7 @@ add_custom_command(
 )
 add_custom_target(mkvsdcu_codegen
     DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/codegen.build.stamp")
+endif()
 
 # Include DLL module shared library targets if codegen has generated them
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/dll_targets.cmake")

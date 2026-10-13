@@ -33,20 +33,41 @@ set(MKVSDCU_SOURCES
     src/input/controller_filter.cpp
     src/mods/mod_overlay.cpp
     src/telemetry/frame_telemetry.cpp
+    src/telemetry/android_health.cpp
     src/telemetry/system_telemetry.cpp
     src/telemetry/perf_overlay.cpp
     src/telemetry/guest_profiler.cpp
 )
 
-if(WIN32)
+if(ANDROID)
+    add_library(mkvdcu SHARED ${MKVSDCU_SOURCES})
+    set(MKVSDCU_TARGET mkvdcu)
+elseif(WIN32)
     add_executable(mkvsdcu WIN32 ${MKVSDCU_SOURCES})
+    set(MKVSDCU_TARGET mkvsdcu)
 else()
     add_executable(mkvsdcu ${MKVSDCU_SOURCES})
+    set(MKVSDCU_TARGET mkvsdcu)
 endif()
 
 # This is target-private host plumbing. The plugin remains selectable at
 # launch via --gpu_plugin xenos; no UE3 or game code is altered here.
-rexglue_setup_target(mkvsdcu GPU_PLUGINS xenos)
+rexglue_setup_target(${MKVSDCU_TARGET} GPU_PLUGINS xenos)
+
+if(ANDROID)
+    # rexruntime already owns rexui and ImGui. Relinking their OBJECT targets
+    # here creates another GImGui: the HUD sets the game's copy, while XAM
+    # dialogs enter the runtime's copy with no context and fault after START.
+    # Only consume the headers; all UI/ImGui calls resolve to rexruntime.
+    target_include_directories(${MKVSDCU_TARGET} PRIVATE
+        $<TARGET_PROPERTY:imgui::imgui,INTERFACE_INCLUDE_DIRECTORIES>)
+else()
+    target_link_libraries(${MKVSDCU_TARGET} PRIVATE rexui imgui::imgui)
+endif()
+
+if(ANDROID)
+    target_link_libraries(mkvdcu PRIVATE android log vulkan OpenSLES EGL)
+endif()
 
 if(WIN32)
     # Performance overlay: GPU engine counters and video memory queries.

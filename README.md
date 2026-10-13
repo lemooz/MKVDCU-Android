@@ -1,35 +1,49 @@
-# MKVDCU-Recomp
+# MKVDCU Android
 
-An unofficial PC port of the Xbox 360 game **Mortal Kombat vs. DC Universe**, made by statically recompiling the game with [ReXGlue](https://github.com/rexglue/rexglue-sdk). You supply your own copy of the game; the launcher builds the PC version on your machine.
+An early Android ARM64 port of **Mortal Kombat vs. DC Universe**, built on the open source [ReXGlue](https://github.com/rexglue/rexglue-sdk) static recompilation project. This is an unofficial community project and is not affiliated with Warner Bros. Games, NetherRealm Studios, or Microsoft.
 
-## Play
+> **Experimental alpha:** the first APK is playable, but compatibility, graphics, performance, and custom-driver support are still being developed. Back up your save data before installing updates.
 
-1. Download `MKVDCU-Recomp.exe` from [Releases](https://github.com/KawaiiBunga/MKVDCU-Recomp/releases/latest) and run it.
-2. **Choose game folder**: the folder you copied the game to, with `default.xex` in it.
-3. **Install build tools**: a one-time download. Windows asks once for permission to run Microsoft's installer.
-4. **Build game**: 5 to 20 minutes the first time, much faster after updates.
-5. **Play.** In game, **F1** (or hold **Back + Start**) opens the settings menu and **F2** shows the performance overlay.
+## First public release
 
-[Getting started](docs/GETTING_STARTED.md) covers each step in detail. If something goes wrong, see [Troubleshooting](docs/TROUBLESHOOTING.md). The launcher updates itself and the port, and has a **Mods** page ([making mods](docs/MODDING.md)).
+Download **[MKVDCU Android v0.1.0-alpha.1](https://github.com/lemooz/MKVDCU-Android/releases/tag/v0.1.0-alpha.1)** from Releases. The APK is ARM64 (`arm64-v8a`) and requires Android 9 or later with Vulkan 1.1 support. It does not include game data; provide your own legally obtained copy.
 
-Only the original retail release is supported (SHA-256 of `default.xex`: `2955F2E2…48E5A7`). The project does not include or distribute any game files.
+### Tested devices
 
-## Status
-
-Tested on one PC: the game boots, plays full Arcade matches with a controller and sound, and holds 60 FPS on a GTX 1650 SUPER. Other modes, hardware and long sessions need more testing. See [Status](docs/STATUS.md) and [Performance](docs/PERFORMANCE.md).
-
-## Develop
-
-| Path | What it is |
+| SoC | Reported result |
 | --- | --- |
-| `targets/mkvsdcu/private/rexglue-host/` | The PC host: CMake project, F1 menu, telemetry, mod loader, and the function list for the supported XEX |
-| `launcher/MKVDCU.Launcher/` | The Windows launcher (WPF, .NET 8) |
-| `scripts/` | Build and run from a checkout, benchmark, make releases |
-| `references/rexglue-sdk/` | Pinned SDK source submodule; port patches live in `patches/rexglue-sdk/` |
-| `mods/index.json` | The mod list the launcher offers |
-| `docs/` | Player guides, build notes, releasing |
+| Qualcomm Snapdragon 8 Elite | Playable |
+| Samsung Exynos 1380 | Reaches in-game |
 
-Build and run from a checkout with the steps in [PC build](docs/PC_BUILD.md). Release process: [Releasing](docs/RELEASING.md). Switch is a later target; `switch/toolchain-test/` only proves the libnx toolchain.
+These are the developer's current test devices. Results can vary with phone model, Android version, thermal state, and Vulkan driver.
 
-## Like what I do?
-I love what I do and want to keep sharing it with the world. You can directly support me and my projects here: https://ko-fi.com/kawaiibunga
+## Graphics drivers
+
+The app can import Vulkan driver packages and includes **partial, experimental support for custom Adreno and Mali drivers**. Driver packages are not bundled. Import a package from **Settings → Vulkan Drivers**, run **Verify**, and select it only if the app approves it. Keep the system driver selected if verification fails. PanVK compatibility is incomplete and some features required by the game are not available on every PanVK device.
+
+## Install and play
+
+1. Download the APK from the [latest release](https://github.com/lemooz/MKVDCU-Android/releases/latest).
+2. Install it on an Android 9+ ARM64 device with Vulkan 1.1.
+3. In the app, select your own game image when prompted. The game image is not part of this repository or release.
+4. Start with the system Vulkan driver. Try imported drivers only after the app verifies them.
+
+For a bug report, include the phone model, SoC, Android version, selected Vulkan driver, graphics settings, and a description of what happened. Do not attach game images, decrypted game files, or personal data.
+
+## Development
+
+- `android/` — Android app, Gradle wrapper, Java/Kotlin-facing UI, JNI and Vulkan driver management.
+- `targets/mkvsdcu/private/rexglue-host/` — game host and Android native target.
+- `patches/rexglue-sdk/` — MKVDCU changes against the pinned ReXGlue SDK submodule.
+- `scripts/android/` — APK packaging, provenance checks, driver checks, and graphics investigation utilities.
+- `docs/ANDROID_RELEASES.md` — release numbering, APK handling, signing, and publication steps.
+
+Builds require Android SDK/NDK and your own legally obtained game files. See [Android release and build notes](docs/ANDROID_RELEASES.md). The desktop port from which this Android work derives is documented in the repository history and its original [KawaiiBunga/MKVDCU-Recomp](https://github.com/KawaiiBunga/MKVDCU-Recomp) project.
+
+## References
+
+Related open source projects used as reading and compatibility references include [DMC-RECOMP](https://github.com/WINDROID-EMU/DMC-RECOMP), [NFSMW-RECOMP](https://github.com/WINDROID-EMU/NFSMW-RECOMP), [UnleashedRecomp-Android](https://github.com/SansNope/UnleashedRecomp-Android), and [Xenia Canary](https://github.com/xenia-canary/xenia-canary). Their code and project-specific patches are not copied into this repository unless explicitly attributed and licensed.
+
+## License
+
+This project follows the GNU GPL v3 license in [`COPYING`](COPYING), with third-party notices in [`android/app/src/main/assets/licenses/`](android/app/src/main/assets/licenses/). Game data remains the user's responsibility and is not distributed here.

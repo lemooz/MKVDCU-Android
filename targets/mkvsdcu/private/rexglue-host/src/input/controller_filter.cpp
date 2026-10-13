@@ -2,17 +2,23 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <mutex>
 
 #include <rex/cvar.h>
+#include <rex/platform.h>
+#include <rex/ui/virtual_key.h>
 #include <rex/input/mnk/mnk_input_driver.h>
 #include <rex/input/nop/nop_input_driver.h>
 #include <rex/input/sdl/sdl_input_driver.h>
+#if REX_PLATFORM_WIN32
 #include <rex/input/xinput/xinput_input_driver.h>
+#endif
 
 REXCVAR_DEFINE_INT32(pad_left_deadzone, 0, "Port/Controller",
                      "Left stick deadzone in percent (0 leaves it to the game)")
@@ -69,6 +75,105 @@ struct PadRecord {
 };
 std::mutex g_pads_mutex;
 std::map<uint64_t, PadRecord> g_pads;
+std::atomic<uint16_t> g_virtual_buttons{0};
+std::atomic<int16_t> g_virtual_lx{0};
+std::atomic<int16_t> g_virtual_ly{0};
+
+class VirtualTouchGamepadDriver final : public InputDriver {
+ public:
+  VirtualTouchGamepadDriver() : InputDriver(nullptr, 0) {}
+
+  X_STATUS Setup() override { return X_STATUS_SUCCESS; }
+
+  void EnumerateDevices(std::vector<DeviceInfo>& out) override {
+    DeviceInfo info;
+    info.id = static_cast<DeviceId>(0x4D4B564443555041ull);  // Stable synthetic device id.
+    info.name = "MKVDCU Virtual Gamepad (Touch)";
+    info.guid = "4d4b5644435550410000000000000000";
+    info.synthetic = true;
+    out.push_back(std::move(info));
+  }
+
+  X_RESULT GetDeviceState(DeviceId, X_INPUT_STATE* out_state) override {
+    if (!out_state) return X_ERROR_BAD_ARGUMENTS;
+    const bool enabled = is_active();
+    X_INPUT_GAMEPAD state{};
+    if (enabled) {
+      state.buttons = g_virtual_buttons.load(std::memory_order_relaxed);
+      state.thumb_lx = g_virtual_lx.load(std::memory_order_relaxed);
+      state.thumb_ly = g_virtual_ly.load(std::memory_order_relaxed);
+    }
+    if (std::memcmp(&last_state_, &state, sizeof(state)) != 0) {
+      last_state_ = state;
+      ++packet_;
+    }
+    out_state->packet_number = packet_;
+    out_state->gamepad = state;
+    return X_ERROR_SUCCESS;
+  }
+
+  X_RESULT GetDeviceCapabilities(DeviceId, uint32_t, X_INPUT_CAPABILITIES* out_caps) override {
+    if (!out_caps) return X_ERROR_BAD_ARGUMENTS;
+    std::memset(out_caps, 0, sizeof(*out_caps));
+    out_caps->type = 0x01;
+    out_caps->sub_type = 0x01;
+    out_caps->gamepad.buttons = 0xFFFF;
+    out_caps->gamepad.left_trigger = 0xFF;
+    out_caps->gamepad.right_trigger = 0xFF;
+    out_caps->gamepad.thumb_lx = out_caps->gamepad.thumb_ly = 0x7FFF;
+    out_caps->gamepad.thumb_rx = out_caps->gamepad.thumb_ry = 0x7FFF;
+    return X_ERROR_SUCCESS;
+  }
+
+  X_RESULT SetDeviceVibration(DeviceId, X_INPUT_VIBRATION*) override { return X_ERROR_SUCCESS; }
+  X_RESULT GetDeviceKeystroke(DeviceId, uint32_t, X_INPUT_KEYSTROKE* out) override {
+    if (!out) return X_ERROR_BAD_ARGUMENTS;
+
+    static constexpr std::pair<uint16_t, rex::ui::VirtualKey> kKeys[] = {
+        {X_INPUT_GAMEPAD_DPAD_UP, rex::ui::VirtualKey::kXInputPadDpadUp},
+        {X_INPUT_GAMEPAD_DPAD_DOWN, rex::ui::VirtualKey::kXInputPadDpadDown},
+        {X_INPUT_GAMEPAD_DPAD_LEFT, rex::ui::VirtualKey::kXInputPadDpadLeft},
+        {X_INPUT_GAMEPAD_DPAD_RIGHT, rex::ui::VirtualKey::kXInputPadDpadRight},
+        {X_INPUT_GAMEPAD_START, rex::ui::VirtualKey::kXInputPadStart},
+        {X_INPUT_GAMEPAD_BACK, rex::ui::VirtualKey::kXInputPadBack},
+        {X_INPUT_GAMEPAD_LEFT_SHOULDER, rex::ui::VirtualKey::kXInputPadLShoulder},
+        {X_INPUT_GAMEPAD_RIGHT_SHOULDER, rex::ui::VirtualKey::kXInputPadRShoulder},
+        {X_INPUT_GAMEPAD_A, rex::ui::VirtualKey::kXInputPadA},
+        {X_INPUT_GAMEPAD_B, rex::ui::VirtualKey::kXInputPadB},
+        {X_INPUT_GAMEPAD_X, rex::ui::VirtualKey::kXInputPadX},
+        {X_INPUT_GAMEPAD_Y, rex::ui::VirtualKey::kXInputPadY},
+    };
+
+    std::lock_guard lock(keystroke_mutex_);
+    const uint16_t current = g_virtual_buttons.load(std::memory_order_relaxed);
+    for (const auto& [button, key] : kKeys) {
+      const bool was_down = (keystroke_buttons_ & button) != 0;
+      const bool is_down = (current & button) != 0;
+      if (was_down == is_down) continue;
+
+      out->virtual_key = static_cast<uint16_t>(key);
+      out->unicode = 0;
+      out->flags = is_down ? X_INPUT_KEYSTROKE_KEYDOWN : X_INPUT_KEYSTROKE_KEYUP;
+      out->user_index = 0;  // InputSystem overwrites this with the assigned user.
+      out->hid_code = 0;
+      if (is_down) {
+        keystroke_buttons_ |= button;
+      } else {
+        keystroke_buttons_ &= ~button;
+      }
+      REXLOG_INFO("[VIRTUAL_PAD][KEYSTROKE] vk=0x{:04X} flags=0x{:04X} buttons=0x{:04X}",
+                  static_cast<uint16_t>(key), static_cast<uint16_t>(out->flags), current);
+      return X_ERROR_SUCCESS;
+    }
+    return X_ERROR_EMPTY;
+  }
+
+ private:
+  X_INPUT_GAMEPAD last_state_{};
+  uint32_t packet_ = 0;
+  std::mutex keystroke_mutex_;
+  uint16_t keystroke_buttons_ = 0;
+};
 
 int ControlIndex(const std::string& name) {
   for (int i = 0; i < kControlCount; ++i) {
@@ -307,12 +412,18 @@ std::unique_ptr<InputSystem> CreateInputSystem(bool tool_mode, std::function<voi
   auto input = std::make_unique<InputSystem>(nullptr);
   if (!tool_mode) {
     const std::string backend = rex::cvar::GetFlagByName("input_backend");
+#if REX_PLATFORM_WIN32
     if (backend == "xinput") {
       AddFiltered(*input, std::make_unique<xinput::XinputInputDriver>(nullptr, 0), on_menu_chord);
     }
     if (backend == "sdl") {
       AddFiltered(*input, std::make_unique<sdl::SDLInputDriver>(nullptr, 0), on_menu_chord);
     }
+#else
+    AddFiltered(*input, std::make_unique<sdl::SDLInputDriver>(nullptr, 0), on_menu_chord);
+#endif
+    auto virtual_pad = std::make_unique<VirtualTouchGamepadDriver>();
+    if (virtual_pad->Setup() == X_STATUS_SUCCESS) input->AddDriver(std::move(virtual_pad));
     auto mnk_driver = std::make_unique<mnk::MnkInputDriver>(nullptr, 0);
     if (mnk_driver->Setup() == X_STATUS_SUCCESS) input->AddDriver(std::move(mnk_driver));
   }
@@ -338,6 +449,24 @@ std::vector<PadSnapshot> ConnectedPads() {
     ++it;
   }
   return pads;
+}
+
+void SetVirtualGamepadState(uint16_t buttons, int16_t thumb_lx, int16_t thumb_ly) {
+  static std::atomic<uint16_t> logged_buttons{0xFFFF};
+  static std::atomic<uint32_t> logged_axes{std::numeric_limits<uint32_t>::max()};
+  g_virtual_buttons.store(buttons, std::memory_order_relaxed);
+  g_virtual_lx.store(thumb_lx, std::memory_order_relaxed);
+  g_virtual_ly.store(thumb_ly, std::memory_order_relaxed);
+  // Quantize stick diagnostics to avoid per-motion log spam. Pack unsigned
+  // halves so negative axes never undergo an undefined signed left shift.
+  const uint32_t qx = static_cast<uint16_t>(static_cast<int32_t>(thumb_lx) / 4096);
+  const uint32_t qy = static_cast<uint16_t>(static_cast<int32_t>(thumb_ly) / 4096);
+  const uint32_t axes = (qx << 16) | qy;
+  const bool buttons_changed = logged_buttons.exchange(buttons, std::memory_order_relaxed) != buttons;
+  const bool axes_changed = logged_axes.exchange(axes, std::memory_order_relaxed) != axes;
+  if (buttons_changed || (axes_changed && buttons == 0)) {
+    REXLOG_INFO("[VIRTUAL_PAD] buttons=0x{:04X} lx={} ly={}", buttons, thumb_lx, thumb_ly);
+  }
 }
 
 }  // namespace port_input

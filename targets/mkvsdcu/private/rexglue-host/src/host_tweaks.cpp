@@ -2,20 +2,30 @@
 
 #include <algorithm>
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <Windows.h>
 #include <timeapi.h>
+#endif
 
 #include <rex/audio/downmix.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+#if defined(_WIN32)
 REXCVAR_DEFINE_STRING(port_gpu_backend, "d3d12", "Port/System",
                       "Graphics backend: d3d12 or vulkan")
     .allowed({"d3d12", "vulkan"})
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+#else
+REXCVAR_DEFINE_STRING(port_gpu_backend, "vulkan", "Port/System",
+                      "Graphics backend: vulkan")
+    .allowed({"vulkan"})
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+#endif
+
 REXCVAR_DEFINE_STRING(port_render_mode, "legacy", "Port/Graphics",
                       "Internal render scale: legacy, native, wide_2x, tall_2x, 2x or 3x")
     .allowed({"legacy", "native", "wide_2x", "tall_2x", "2x", "3x"})
@@ -93,6 +103,7 @@ constexpr const char* kWatched[] = {"port_timer_resolution", "port_process_prior
 bool g_timer_raised = false;
 
 void ApplyTimer() {
+#if defined(_WIN32)
   const bool want = REXCVAR_GET(port_timer_resolution);
   if (want && !g_timer_raised) {
     g_timer_raised = timeBeginPeriod(1) == TIMERR_NOERROR;
@@ -100,17 +111,21 @@ void ApplyTimer() {
     timeEndPeriod(1);
     g_timer_raised = false;
   }
+#endif
 }
 
 void ApplyPriority() {
+#if defined(_WIN32)
   const std::string& priority = REXCVAR_GET(port_process_priority);
   const DWORD value = priority == "high"           ? HIGH_PRIORITY_CLASS
                       : priority == "above_normal" ? ABOVE_NORMAL_PRIORITY_CLASS
                                                    : NORMAL_PRIORITY_CLASS;
   SetPriorityClass(GetCurrentProcess(), value);
+#endif
 }
 
 void ApplyPowerThrottling() {
+#if defined(_WIN32)
   // Execution speed throttling (EcoQoS) and, on Windows 11, ignoring the
   // timer resolution request while the window is covered.
   constexpr ULONG kExecutionSpeed = 0x1, kIgnoreTimerResolution = 0x4;
@@ -123,6 +138,7 @@ void ApplyPowerThrottling() {
     state.StateMask &= kExecutionSpeed;
     SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &state, sizeof(state));
   }
+#endif
 }
 
 void ApplyAudio() {
@@ -153,7 +169,9 @@ void Install() {
 
 void Uninstall() {
   for (const char* name : kWatched) rex::cvar::UnregisterChangeCallbacks(name);
+#if defined(_WIN32)
   if (g_timer_raised) timeEndPeriod(1);
+#endif
   g_timer_raised = false;
 }
 

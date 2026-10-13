@@ -34,4 +34,9 @@ std::unique_ptr<rex::input::InputSystem> CreateInputSystem(bool tool_mode,
 
 std::vector<PadSnapshot> ConnectedPads();
 
+// State supplied by the Android on-screen pad. It is exposed as a synthetic
+// XInput device, so the game reads it through the same XamInputGetState path
+// as a physical controller.
+void SetVirtualGamepadState(uint16_t buttons, int16_t thumb_lx, int16_t thumb_ly);
+
 }  // namespace port_input

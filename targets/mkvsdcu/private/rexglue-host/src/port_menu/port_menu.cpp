@@ -5,11 +5,13 @@
 #include <cstring>
 #include <iterator>
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <Windows.h>
 #include <shellapi.h>
+#endif
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -464,7 +466,11 @@ void PortMenuDialog::DrawCustom(const Setting& setting) {
     const PortWindowInfo window = host_->window_info ? host_->window_info() : PortWindowInfo{};
     const std::string current = std::to_string(window.width) + " x " + std::to_string(window.height);
     if (ImGui::BeginCombo("##window_size", current.c_str())) {
+#if defined(_WIN32)
       const int screen_w = GetSystemMetrics(SM_CXSCREEN), screen_h = GetSystemMetrics(SM_CYSCREEN);
+#else
+      const int screen_w = 3840, screen_h = 2160;
+#endif
       for (const auto& [w, h] : kWindowSizes) {
         if (int(w) > screen_w || int(h) > screen_h) continue;
         const std::string label = std::to_string(w) + " x " + std::to_string(h);
@@ -626,8 +632,10 @@ void PortMenuDialog::DrawAbout() {
   GroupTitle("FILES");
   ImGui::TextColored(kDim, "Settings save automatically to %s", host_->config_path.string().c_str());
   if (ImGui::Button("Open settings folder")) {
+#if defined(_WIN32)
     ShellExecuteW(nullptr, L"open", host_->config_path.parent_path().wstring().c_str(), nullptr,
                   nullptr, SW_SHOWNORMAL);
+#endif
   }
 }
 

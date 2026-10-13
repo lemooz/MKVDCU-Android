@@ -7,19 +7,32 @@
 #include <fstream>
 #include <map>
 #include <unordered_map>
+#include <array>
+#include <atomic>
+#include <cstring>
+#if defined(__ANDROID__) && defined(__aarch64__)
+#include <csignal>
+#include <dlfcn.h>
+#include <ucontext.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+#endif
 
+#if defined(_WIN32)
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <Windows.h>
 #include <dbghelp.h>
 #include <psapi.h>
+#endif
 
 #include <rex/ppc/func.h>
 
 namespace telemetry {
 namespace {
 
+#if defined(_WIN32) || defined(__ANDROID__)
 // Recompiled functions sorted by their host address, so an instruction
 // pointer inside generated code can be traced back to the guest function.
 struct HostFunction {
@@ -39,6 +52,9 @@ const std::vector<HostFunction>& HostFunctions() {
   }();
   return functions;
 }
+#endif
+
+#if defined(_WIN32)
 
 std::string Describe(uintptr_t address, uintptr_t exe_begin, uintptr_t exe_end) {
   char text[256];
@@ -81,7 +97,59 @@ std::string Describe(uintptr_t address, uintptr_t exe_begin, uintptr_t exe_end) 
   }
   return text;
 }
+#endif
+#if defined(__ANDROID__) && defined(__aarch64__)
+struct SampleSlot { std::atomic<uint32_t> tid{0}; std::atomic<uintptr_t> pc{0}; };
+std::array<SampleSlot, 4> sample_slots;
+std::mutex android_profile_mutex;
+static_assert(std::atomic<uintptr_t>::is_always_lock_free);
+void SampleSignal(int, siginfo_t*, void* context) {
+  const uint32_t tid = uint32_t(syscall(SYS_gettid));
+  for (auto& slot : sample_slots) if (slot.tid.load(std::memory_order_relaxed) == tid) {
+    slot.pc.store(static_cast<ucontext_t*>(context)->uc_mcontext.pc, std::memory_order_release);
+    break;
+  }
+}
+bool InstallSampler(int signal) {
+  struct sigaction previous{};
+  if (sigaction(signal, nullptr, &previous)) return false;
+  if ((previous.sa_flags & SA_SIGINFO) && previous.sa_sigaction == &SampleSignal) return true;
+  if (previous.sa_handler != SIG_DFL && previous.sa_handler != SIG_IGN) return false;
+  struct sigaction action{};
+  sigemptyset(&action.sa_mask);
+  action.sa_flags = SA_SIGINFO | SA_RESTART;
+  action.sa_sigaction = &SampleSignal;
+  // Leave an idle handler installed: a signal already queued must not acquire
+  // a fatal default action when the capture finishes. Slots have static lifetime.
+  return sigaction(signal, &action, nullptr) == 0;
+}
+std::string DescribeAndroid(uintptr_t pc) {
+  Dl_info module{};
+  if (!dladdr(reinterpret_cast<void*>(pc), &module) || !module.dli_fbase) return "unmapped PC";
+  char text[320];
+  const char* path = module.dli_fname ? module.dli_fname : "?";
+  const char* slash = std::strrchr(path, '/');
+  const auto& functions = HostFunctions();
+  auto it = std::upper_bound(functions.begin(), functions.end(), pc,
+      [](uintptr_t address, const HostFunction& f) { return address < f.host; });
+  uint32_t guest = 0;
+  if (it != functions.begin() && it != functions.end()) {
+    --it; Dl_info generated{};
+    if (dladdr(reinterpret_cast<void*>(it->host), &generated) && generated.dli_fbase == module.dli_fbase)
+      guest = it->guest;
+  }
+  if (guest) std::snprintf(text, sizeof(text), "%s+0x%llX guest region near sub_%08X",
+      slash ? slash+1 : path, (unsigned long long)(pc-reinterpret_cast<uintptr_t>(module.dli_fbase)), guest);
+  else std::snprintf(text, sizeof(text), "%s+0x%llX %s", slash ? slash+1 : path,
+      (unsigned long long)(pc-reinterpret_cast<uintptr_t>(module.dli_fbase)), module.dli_sname ? module.dli_sname : "");
+  return text;
+}
+#endif
+std::atomic<bool> android_profile_request{false};
 }  // namespace
+
+void RequestAndroidCpuProfile() { android_profile_request.store(true, std::memory_order_release); }
+bool ConsumeAndroidCpuProfileRequest() { return android_profile_request.exchange(false, std::memory_order_acq_rel); }
 
 GuestProfiler::~GuestProfiler() {
   if (worker_.joinable()) worker_.join();
@@ -109,6 +177,7 @@ ProfileReport GuestProfiler::Report() const {
 
 void GuestProfiler::Run(std::vector<std::pair<uint32_t, std::string>> threads, double seconds,
                         std::filesystem::path directory) {
+#if defined(_WIN32)
   SetThreadDescription(GetCurrentThread(), L"Port profiler");
   struct Target {
     uint32_t id;
@@ -203,6 +272,61 @@ void GuestProfiler::Run(std::vector<std::pair<uint32_t, std::string>> threads, d
   std::lock_guard lock(mutex_);
   report_ = std::move(report);
   report_.running = false;
+#elif defined(__ANDROID__) && defined(__aarch64__)
+  std::unique_lock capture_lock(android_profile_mutex);
+  const int signal = SIGRTMIN + 12; // Runtime owns only SIGRTMIN..SIGRTMIN+2.
+  if (signal > SIGRTMAX || !InstallSampler(signal)) {
+    std::lock_guard lock(mutex_); report_.running = false;
+    report_.summary = "CPU sampler signal unavailable or owned by another component"; return;
+  }
+  if (threads.size() > sample_slots.size()) threads.resize(sample_slots.size());
+  std::array<std::vector<uintptr_t>, 4> samples;
+  for (size_t i = 0; i < threads.size(); ++i) {
+    samples[i].reserve(size_t(seconds*100)+16);
+    sample_slots[i].pc.store(0);
+    sample_slots[i].tid.store(threads[i].first);
+  }
+  const auto end = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+  while (std::chrono::steady_clock::now() < end) {
+    struct sigaction current{};
+    if (sigaction(signal, nullptr, &current) || !(current.sa_flags & SA_SIGINFO) ||
+        current.sa_sigaction != &SampleSignal) break;
+    for (const auto& target : threads) syscall(SYS_tgkill, getpid(), target.first, signal);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    for (size_t i = 0; i < threads.size(); ++i)
+      if (auto pc = sample_slots[i].pc.exchange(0, std::memory_order_acq_rel)) samples[i].push_back(pc);
+  }
+  for (auto& slot : sample_slots) slot.tid.store(0);
+  ProfileReport report;
+  std::error_code ec; std::filesystem::create_directories(directory, ec);
+  report.file = directory / ("profile-android-" + std::to_string(std::time(nullptr)) + ".txt");
+  std::ofstream out(report.file);
+  out << "Android ARM64 CPU PC samples, ~100 Hz per thread, " << seconds << " s\n"
+      << "Wall-clock samples (including blocked threads), not CPU utilization. Guest mapping is nearest-region inference.\n";
+  uint32_t total = 0;
+  for (size_t i = 0; i < threads.size(); ++i) {
+    ThreadProfile profile; profile.thread_id=threads[i].first; profile.thread_name=threads[i].second;
+    profile.samples=uint32_t(samples[i].size()); total+=profile.samples;
+    std::map<std::string,uint32_t> locations;
+    for (auto pc : samples[i]) ++locations[DescribeAndroid(pc)];
+    for (auto& [location,count] : locations)
+      profile.top.push_back({location,count,profile.samples ? 100.0*count/profile.samples : 0});
+    std::sort(profile.top.begin(),profile.top.end(),[](const auto& a,const auto& b){return a.samples>b.samples;});
+    if (profile.top.size()>25) profile.top.resize(25);
+    out << "\n== " << profile.thread_name << " tid=" << profile.thread_id << " samples=" << profile.samples << '\n';
+    for (const auto& entry : profile.top) out << entry.samples << " " << entry.percent << "% " << entry.location << '\n';
+    report.threads.push_back(std::move(profile));
+  }
+  report.summary=std::to_string(total)+" ARM64 PC samples; saved "+report.file.filename().string();
+  std::lock_guard lock(mutex_); report_=std::move(report); report_.running=false;
+#else
+  (void)threads;
+  (void)seconds;
+  (void)directory;
+  std::lock_guard lock(mutex_);
+  report_.running = false;
+  report_.summary = "Profiler not supported on Android";
+#endif
 }
 
 }  // namespace telemetry

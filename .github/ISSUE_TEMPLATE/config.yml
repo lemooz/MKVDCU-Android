@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Read the README and release notes
+    url: https://github.com/lemooz/MKVDCU-Android/releases
+    about: Check known issues and device results before reporting a problem.

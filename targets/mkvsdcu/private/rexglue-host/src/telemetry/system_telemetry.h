@@ -36,6 +36,7 @@ struct SystemSnapshot {
   std::string gpu_name;
   // Busiest GPU engine, as in Task Manager; -1 when unavailable.
   double gpu_3d_percent = -1;        // this process
+  double gpu_submission_ms = -1;    // completed timestamp intervals, not utilization
   double gpu_3d_total_percent = -1;  // every process
   std::string gpu_engine;            // e.g. "3D" or "graphics_1"
   uint64_t vram_used_bytes = 0;
