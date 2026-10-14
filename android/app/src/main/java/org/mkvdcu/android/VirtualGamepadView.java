@@ -14,7 +14,7 @@ import android.view.View;
 final class VirtualGamepadView extends View {
     interface StateSink {void send(int buttons,int lx,int ly,int rx,int ry,int lt,int rt);}
     interface SelectionListener {void selected(GamepadLayout.Control control);}
-    private static final int NONE=-1,TOGGLE=-2,EDIT=-3;
+    private static final int NONE=-1,TOGGLE=-2,EDIT=-3,MENU=-4;
     private static final class Touch {
         final int control;float x,y;
         Touch(int control,float x,float y){this.control=control;this.x=x;this.y=y;}
@@ -24,18 +24,23 @@ final class VirtualGamepadView extends View {
     private final SparseArray<Touch> touches=new SparseArray<>();
     private final StateSink sink;
     private final Runnable customize;
+    private final Runnable onMenu;
     private final boolean editor;
     private GamepadLayout layout;
     private boolean visible=true;
     private int selected=-1,dragPointer=-1;
     private float dragDx,dragDy,drawAlpha=1;
     private SelectionListener listener;
-    VirtualGamepadView(Context context,StateSink sink,Runnable customize){this(context,GamepadLayout.load(context),sink,customize,false);}
-    VirtualGamepadView(Context context,GamepadLayout layout,StateSink sink,Runnable customize,boolean editor){
-        super(context);this.layout=layout;this.sink=sink;this.customize=customize;this.editor=editor;
+    VirtualGamepadView(Context context,StateSink sink,Runnable customize){this(context,GamepadLayout.load(context),sink,customize,null,false);}
+    VirtualGamepadView(Context context,StateSink sink,Runnable customize,Runnable onMenu){this(context,GamepadLayout.load(context),sink,customize,onMenu,false);}
+    VirtualGamepadView(Context context,GamepadLayout layout,StateSink sink,Runnable customize,boolean editor){this(context,layout,sink,customize,null,editor);}
+    VirtualGamepadView(Context context,GamepadLayout layout,StateSink sink,Runnable customize,Runnable onMenu,boolean editor){
+        super(context);this.layout=layout;this.sink=sink;this.customize=customize;this.onMenu=onMenu;this.editor=editor;
         setWillNotDraw(false);setLayerType(View.LAYER_TYPE_HARDWARE,null);
         setContentDescription(editor ? "Editor do controle Xbox 360. Arraste os controles." : "Controle virtual Xbox 360");
     }
+    boolean isPadVisible(){return visible;}
+    void setPadVisible(boolean v){if(visible!=v){releaseAll();visible=v;invalidate();}}
     GamepadLayout layout(){return layout;}
     void setSelectionListener(SelectionListener l){listener=l;}
     GamepadLayout.Control selection(){return layout.find(selected);}
@@ -63,19 +68,25 @@ final class VirtualGamepadView extends View {
             if(editor && c.id==selected){bounds(c,rect);rect.inset(-6,-6);paint.setStyle(Paint.Style.STROKE);
                 paint.setStrokeWidth(3);ink(0xFF6DE6B1);canvas.drawRoundRect(rect,18,18,paint);paint.setStyle(Paint.Style.FILL);}
         }
-        if(!editor){drawToolbar(canvas,false);drawToolbar(canvas,true);}
+        if(!editor){drawToolbar(canvas);}
     }
     private void bounds(GamepadLayout.Control c,RectF out){
         float x=c.x*getWidth(),y=c.y*getHeight(),w=c.halfWidth(GamepadLayout.unit(getWidth(),getHeight())),h=c.halfHeight(GamepadLayout.unit(getWidth(),getHeight()));out.set(x-w,y-h,x+w,y+h);
     }
-    private void toolbarBounds(boolean edit,RectF out){
-        float unit=Math.max(34,getHeight()*.054f),width=unit*2.35f,right=getWidth()-12-(edit ? 0 : width+10);
+    private void toolbarBounds(int slot,RectF out){
+        float unit=Math.max(34,getHeight()*.054f),width=unit*2.35f,gap=10;
+        float right=getWidth()-12-(2-slot)*(width+gap);
         out.set(right-width,12,right,12+unit);
     }
-    private void drawToolbar(Canvas canvas,boolean edit){
-        toolbarBounds(edit,rect);ink(0xD41A2530);canvas.drawRoundRect(rect,14,14,paint);
-        paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.5f);ink(0xAA9CAAB9);canvas.drawRoundRect(rect,14,14,paint);
-        paint.setStyle(Paint.Style.FILL);text(canvas,edit ? "AJUSTAR" : visible ? "PAD −" : "PAD +",rect.centerX(),rect.centerY(),rect.height()*.32f,Color.WHITE);
+    private void drawToolbarButton(Canvas canvas,int slot,String label,int bg,int strokeColor){
+        toolbarBounds(slot,rect);ink(bg);canvas.drawRoundRect(rect,12,12,paint);
+        paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.5f);ink(strokeColor);canvas.drawRoundRect(rect,12,12,paint);
+        paint.setStyle(Paint.Style.FILL);text(canvas,label,rect.centerX(),rect.centerY(),rect.height()*.33f,Color.WHITE);
+    }
+    private void drawToolbar(Canvas canvas){
+        drawToolbarButton(canvas,0,"MENU",0xD9121622,0xFFD4A853);
+        drawToolbarButton(canvas,1,visible ? "PAD −" : "PAD +",0xD9121622,0xFF94A3B8);
+        drawToolbarButton(canvas,2,"AJUSTAR",0xD9121622,0xFF3B82F6);
     }
     private void drawControl(Canvas canvas,GamepadLayout.Control c){
         float x=c.x*getWidth(),y=c.y*getHeight(),r=c.radius(GamepadLayout.unit(getWidth(),getHeight()));boolean down=pressed(c.id);
@@ -125,7 +136,12 @@ final class VirtualGamepadView extends View {
         }return bits;
     }
     private int target(float x,float y){
-        if(!editor){toolbarBounds(true,rect);if(rect.contains(x,y))return EDIT;toolbarBounds(false,rect);if(rect.contains(x,y))return TOGGLE;if(!visible)return NONE;}
+        if(!editor){
+            toolbarBounds(0,rect);if(rect.contains(x,y))return MENU;
+            toolbarBounds(1,rect);if(rect.contains(x,y))return TOGGLE;
+            toolbarBounds(2,rect);if(rect.contains(x,y))return EDIT;
+            if(!visible)return NONE;
+        }
         for(int i=layout.controls.size()-1;i>=0;i--){GamepadLayout.Control c=layout.controls.get(i);if(!c.visible && !editor)continue;bounds(c,rect);
             if(c.round()){if(Math.hypot(x-rect.centerX(),y-rect.centerY())<=c.radius(GamepadLayout.unit(getWidth(),getHeight())))return c.id;}else if(rect.contains(x,y))return c.id;
         }return NONE;
@@ -146,6 +162,7 @@ final class VirtualGamepadView extends View {
         if(action==MotionEvent.ACTION_CANCEL){releaseAll();return true;}
         if(action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN){
             int control=target(event.getX(index),event.getY(index));
+            if(control==MENU){releaseAll();if(onMenu!=null)onMenu.run();performClick();return true;}
             if(control==TOGGLE){releaseAll();visible=!visible;invalidate();performClick();return true;}
             if(control==EDIT){releaseAll();if(customize!=null)customize.run();performClick();return true;}
             if(control==NONE)return editor || touches.size()>0;

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Backgrounds & Surfaces -->
+    <color name="mk_bg_dark">#090B0F</color>
+    <color name="mk_bg_surface">#131722</color>
+    <color name="mk_bg_surface_alt">#1A1F2C</color>
+    <color name="mk_bg_card">#141824</color>
+    <color name="mk_bg_scrim">#DD07090D</color>
+
+    <!-- Mortal Kombat Burnished Gold & Ember -->
+    <color name="mk_gold_primary">#D4A853</color>
+    <color name="mk_gold_bright">#F0C775</color>
+    <color name="mk_gold_dark">#8B6826</color>
+    <color name="mk_gold_muted">#A38952</color>
+    <color name="mk_amber_ember">#E07A1E</color>
+    <color name="mk_crimson">#A93226</color>
+    <color name="mk_crimson_hover">#C0392B</color>
+
+    <!-- DC Universe Metallic Steel & Electric Blue -->
+    <color name="dc_blue_primary">#3B82F6</color>
+    <color name="dc_blue_glow">#60A5FA</color>
+    <color name="dc_steel_light">#E2E8F0</color>
+    <color name="dc_steel_mid">#94A3B8</color>
+    <color name="dc_steel_dark">#475569</color>
+    <color name="dc_border">#2C3547</color>
+
+    <!-- Typography & Status -->
+    <color name="text_white">#F8FAFC</color>
+    <color name="text_gold">#E8D3A7</color>
+    <color name="text_muted">#8E9CAB</color>
+    <color name="text_dim">#5B6777</color>
+
+    <color name="status_ready">#10B981</color>
+    <color name="status_ready_bg">#18342B</color>
+    <color name="status_waiting">#F59E0B</color>
+    <color name="status_waiting_bg">#3D2D14</color>
+    <color name="status_error">#EF4444</color>
+    <color name="status_error_bg">#3D1818</color>
+</resources>

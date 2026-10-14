@@ -40,6 +40,8 @@ public class MainActivity extends Activity {
 
         findViewById(R.id.btn_pick).setOnClickListener(v -> pickIso());
         findViewById(R.id.btn_play).setOnClickListener(v -> play());
+        View btnControls = findViewById(R.id.btn_controls);
+        if (btnControls != null) btnControls.setOnClickListener(v -> startActivity(new Intent(this, GamepadEditorActivity.class)));
         findViewById(R.id.btn_settings).setOnClickListener(v -> showSettings());
         findViewById(R.id.btn_about).setOnClickListener(v -> showAbout());
 
@@ -123,7 +125,8 @@ public class MainActivity extends Activity {
         }
         prefs.setIsoUri(uri.toString());
         prefs.setInstalled(false);
-        statusView.setText("Validando imagem…");
+        statusView.setText("VALIDANDO IMAGEM…");
+        statusView.setTextColor(getColor(R.color.status_waiting));
         detailsView.setText(uri.toString());
 
         new Thread(() -> {
@@ -132,11 +135,13 @@ public class MainActivity extends Activity {
                 if (result.ok) {
                     prefs.setInstalled(true);
                     prefs.setXexSha256(result.xexSha256);
-                    statusView.setText("Instalado");
+                    statusView.setText("PRONTO PARA COMBATE");
+                    statusView.setTextColor(getColor(R.color.status_ready));
                     detailsView.setText(result.summary());
                 } else {
                     prefs.setInstalled(false);
-                    statusView.setText("Arquivo incompatível");
+                    statusView.setText("ARQUIVO INCOMPATÍVEL");
+                    statusView.setTextColor(getColor(R.color.status_error));
                     detailsView.setText(result.message);
                 }
                 refresh();
@@ -361,15 +366,21 @@ public class MainActivity extends Activity {
     }
 
     private void refresh() {
+        DriverStore.Driver currentDriver = new DriverStore(this).get(prefs.getDriverId());
+        String driverLabel = currentDriver != null ? currentDriver.name : "Sistema";
         if (prefs.isInstalled()) {
-            statusView.setText("Instalado");
+            statusView.setText("PRONTO PARA COMBATE");
+            statusView.setTextColor(getColor(R.color.status_ready));
             String uri = prefs.getIsoUri();
             String sha = prefs.getXexSha256();
             detailsView.setText("ISO: " + uri + (sha == null || sha.isEmpty() ? ""
-                    : "\nXEX: " + sha.substring(0, Math.min(16, sha.length())) + "…"));
+                    : "\nXEX: " + sha.substring(0, Math.min(16, sha.length())) + "…")
+                    + "\nDriver Vulkan: " + driverLabel);
         } else {
-            statusView.setText("Não instalado");
-            detailsView.setText("Nenhuma ISO selecionada");
+            statusView.setText("AGUARDANDO ISO");
+            statusView.setTextColor(getColor(R.color.status_waiting));
+            detailsView.setText("Selecione a imagem ISO de Xbox 360 para iniciar o combate."
+                    + "\nDriver Vulkan: " + driverLabel);
         }
         View playButton = findViewById(R.id.btn_play);
         playButton.setEnabled(prefs.isInstalled());

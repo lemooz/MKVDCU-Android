@@ -55,3 +55,9 @@ The current release build uses the developer's local Android debug signing key. 
 versionName `0.1.1`, versionCode `2`. Complete customizable Xbox 360 touch controls and new icon; Turnip Auto/Sysmem/GMEM selection with per-mode verification/caches; verification of selected Qualcomm ELF/helpers; periodic native pipeline-cache snapshot/IO in a background worker.
 
 Normal and optional diagnostic APKs use the same package ID/signing key. Native-library provenance and ARM64/Gradle builds passed. No new Snapdragon FPS or physical Turnip validation is claimed. Known graphical/performance problems and experimental PanVK support remain.
+
+## v0.1.2 prerelease
+
+versionName `0.1.2`, versionCode `3`. UI update: redesigned launcher, MK/DC theme and banner, status/selected-driver display, direct control-editor access, on-screen MENU action and in-game session menu with HUD/control/session actions. Retains the native renderer and driver changes from v0.1.1.
+
+Release and Diagnostic APKs packaged from the existing verified ARM64 outputs. This is a UI update, not a new claim of GPU compatibility or FPS improvement. New menu/session actions have not been physically validated in this publication round.

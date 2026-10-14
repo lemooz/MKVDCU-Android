@@ -11,7 +11,11 @@ import android.view.WindowManager;
 import android.view.ViewGroup;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
-
+import android.content.Intent;
+import android.app.AlertDialog;
+import android.widget.Toast;
+import android.view.KeyEvent;
+import android.view.View;
 import org.libsdl.app.SDLActivity;
 
 import java.util.ArrayList;
@@ -30,6 +34,7 @@ public class GameActivity extends SDLActivity {
     private static final String TAG = "MKVDCU";
     private static ParcelFileDescriptor sIsoPfd;
     private VirtualGamepadView virtualGamepadView;
+    private android.view.View inGameMenuView;
     private final Handler healthHandler = new Handler(Looper.getMainLooper());
     private TextView healthView;
     private long healthTick;
@@ -165,11 +170,18 @@ public class GameActivity extends SDLActivity {
         android.view.View content = SDLActivity.getContentView();
         if (content instanceof ViewGroup) {
             ViewGroup root = (ViewGroup) content;
-            virtualGamepadView = new VirtualGamepadView(this,GameActivity::nativeSetVirtualGamepadStateV2,
-                ()->startActivity(new android.content.Intent(this,GamepadEditorActivity.class)));
+            virtualGamepadView = new VirtualGamepadView(this, GameActivity::nativeSetVirtualGamepadStateV2,
+                () -> startActivity(new android.content.Intent(this, GamepadEditorActivity.class)),
+                this::toggleInGameMenu);
             root.addView(virtualGamepadView, new RelativeLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-            Log.i(TAG, "Virtual touchscreen gamepad enabled");
+            Log.i(TAG, "Virtual touchscreen gamepad enabled with menu hook");
+
+            inGameMenuView = getLayoutInflater().inflate(R.layout.layout_ingame_menu, root, false);
+            inGameMenuView.setVisibility(android.view.View.GONE);
+            root.addView(inGameMenuView, new RelativeLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            setupInGameMenu();
             if (diagnostics) {
             healthView = new TextView(this);
             healthView.setTextColor(0xFFE0FFDD);
@@ -249,6 +261,137 @@ public class GameActivity extends SDLActivity {
             }
             sIsoPfd = null;
         }
+    }
+
+    private void setupInGameMenu() {
+        if (inGameMenuView == null) return;
+        inGameMenuView.findViewById(R.id.btn_menu_close).setOnClickListener(v -> hideInGameMenu());
+        inGameMenuView.findViewById(R.id.btn_menu_resume).setOnClickListener(v -> hideInGameMenu());
+        inGameMenuView.findViewById(R.id.btn_menu_controls).setOnClickListener(v -> {
+            hideInGameMenu();
+            startActivity(new Intent(this, GamepadEditorActivity.class));
+        });
+        inGameMenuView.findViewById(R.id.btn_menu_hud).setOnClickListener(v -> toggleHud());
+        inGameMenuView.findViewById(R.id.btn_menu_restart).setOnClickListener(v -> confirmRestart());
+        inGameMenuView.findViewById(R.id.btn_menu_exit).setOnClickListener(v -> confirmExit());
+    }
+
+    private void toggleHud() {
+        if (healthView != null) {
+            boolean isVisible = healthView.getVisibility() == View.VISIBLE;
+            healthView.setVisibility(isVisible ? View.GONE : View.VISIBLE);
+            if (!isVisible) healthHandler.post(healthUpdate);
+            else healthHandler.removeCallbacks(healthUpdate);
+            Toast.makeText(this, isVisible ? "HUD de desempenho ocultado" : "HUD de desempenho ativado", Toast.LENGTH_SHORT).show();
+        } else {
+            View content = SDLActivity.getContentView();
+            if (content instanceof ViewGroup) {
+                ViewGroup root = (ViewGroup) content;
+                healthView = new TextView(this);
+                healthView.setTextColor(0xFFE0FFDD);
+                healthView.setBackgroundColor(0xAA102018);
+                healthView.setTextSize(9);
+                healthView.setTypeface(android.graphics.Typeface.MONOSPACE);
+                healthView.setPadding(8, 4, 8, 4);
+                RelativeLayout.LayoutParams healthParams = new RelativeLayout.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                healthParams.leftMargin = 20;
+                healthParams.topMargin = 145;
+                root.addView(healthView, healthParams);
+                healthHandler.post(healthUpdate);
+                Toast.makeText(this, "HUD de desempenho ativado", Toast.LENGTH_SHORT).show();
+            }
+        }
+    }
+
+    private void confirmRestart() {
+        new AlertDialog.Builder(this)
+                .setTitle("Reiniciar Partida")
+                .setMessage("Deseja reiniciar a sessão atual do jogo?")
+                .setPositiveButton("Reiniciar", (dialog, which) -> restartGameSession())
+                .setNegativeButton("Cancelar", null)
+                .show();
+    }
+
+    private void confirmExit() {
+        new AlertDialog.Builder(this)
+                .setTitle("Sair do Port")
+                .setMessage("Deseja encerrar o jogo e voltar ao menu principal?")
+                .setPositiveButton("Sair", (dialog, which) -> exitPort())
+                .setNegativeButton("Cancelar", null)
+                .show();
+    }
+
+    private void restartGameSession() {
+        hideInGameMenu();
+        if (virtualGamepadView != null) virtualGamepadView.releaseAll();
+        nativeSetVirtualGamepadStateV2(0, 0, 0, 0, 0, 0, 0);
+        Intent restart = new Intent(getIntent());
+        restart.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        finish();
+        startActivity(restart);
+        android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
+    private void exitPort() {
+        hideInGameMenu();
+        Log.i(TAG, "Exiting port cleanly upon user request");
+        if (virtualGamepadView != null) virtualGamepadView.releaseAll();
+        nativeSetVirtualGamepadStateV2(0, 0, 0, 0, 0, 0, 0);
+        healthHandler.removeCallbacksAndMessages(null);
+        if (performanceLog != null) try { performanceLog.close(); } catch (Exception ignored) { }
+        if (frameLog != null) try { frameLog.close(); } catch (Exception ignored) { }
+        if (sIsoPfd != null) {
+            try { sIsoPfd.close(); } catch (Exception ignored) { }
+            sIsoPfd = null;
+        }
+        finish();
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            android.os.Process.killProcess(android.os.Process.myPid());
+        }, 120);
+    }
+
+    public void showInGameMenu() {
+        if (inGameMenuView == null) return;
+        if (virtualGamepadView != null) virtualGamepadView.releaseAll();
+        nativeSetVirtualGamepadStateV2(0, 0, 0, 0, 0, 0, 0);
+        TextView info = inGameMenuView.findViewById(R.id.ingame_session_info);
+        if (info != null) {
+            String driverId = getIntent().getStringExtra("driver_id");
+            DriverStore.Driver driver = new DriverStore(this).get(driverId);
+            info.setText("Driver Vulkan: " + (driver != null ? driver.name : "Sistema") +
+                    " • 1× Resolução Nativa • Xbox 360 ARM64");
+        }
+        inGameMenuView.setVisibility(View.VISIBLE);
+        inGameMenuView.bringToFront();
+    }
+
+    public void hideInGameMenu() {
+        if (inGameMenuView != null) {
+            inGameMenuView.setVisibility(View.GONE);
+        }
+    }
+
+    public void toggleInGameMenu() {
+        if (inGameMenuView != null && inGameMenuView.getVisibility() == View.VISIBLE) {
+            hideInGameMenu();
+        } else {
+            showInGameMenu();
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        toggleInGameMenu();
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
+            toggleInGameMenu();
+            return true;
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     @Override

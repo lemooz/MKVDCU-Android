@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Outer Border with Gold/Dark Frame -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/mk_bg_surface" />
+            <stroke
+                android:width="2dp"
+                android:color="@color/mk_gold_primary" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+    <!-- Inner Body -->
+    <item
+        android:left="2dp"
+        android:top="2dp"
+        android:right="2dp"
+        android:bottom="2dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="#1A202C"
+                android:endColor="#0F131C"
+                android:type="linear" />
+            <corners android:radius="10dp" />
+        </shape>
+    </item>
+</layer-list>

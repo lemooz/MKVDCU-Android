@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base MK vs DC Theme -->
+    <style name="Theme.MKVDCU" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/mk_bg_dark</item>
+        <item name="android:colorBackground">@color/mk_bg_dark</item>
+        <item name="android:colorPrimary">@color/mk_gold_primary</item>
+        <item name="android:colorPrimaryDark">@color/mk_bg_dark</item>
+        <item name="android:colorAccent">@color/dc_blue_primary</item>
+        <item name="android:textColorPrimary">@color/text_white</item>
+        <item name="android:textColorSecondary">@color/text_muted</item>
+        <item name="android:navigationBarColor">@color/mk_bg_dark</item>
+        <item name="android:statusBarColor">@color/mk_bg_dark</item>
+    </style>
+
+    <!-- Fullscreen Game Theme -->
+    <style name="Theme.MKVDCU.Fullscreen" parent="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <item name="android:windowBackground">@color/mk_bg_dark</item>
+        <item name="android:colorBackground">@color/mk_bg_dark</item>
+        <item name="android:navigationBarColor">@color/mk_bg_dark</item>
+        <item name="android:statusBarColor">@color/mk_bg_dark</item>
+    </style>
+</resources>

@@ -2,109 +2,240 @@
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0E1620"
+    android:background="@color/mk_bg_dark"
     android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="24dp">
+        android:paddingBottom="32dp">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="MKVDCU"
-            android:textColor="#48D8E6"
-            android:textSize="34sp"
-            android:textStyle="bold" />
+        <!-- Hero Header with MK vs DC Banner & Atmospheric Vignette -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="220dp">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:text="Mortal Kombat vs. DC Universe"
-            android:textColor="#9FB3C8"
-            android:textSize="16sp" />
+            <ImageView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:src="@drawable/mkvdcu_banner"
+                android:contentDescription="Mortal Kombat vs. DC Universe Banner" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Android ARM64 - ReXGlue static recompilation"
-            android:textColor="#5A6B7B"
-            android:textSize="12sp" />
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_hero_gradient" />
 
+            <!-- Subtitle Badge at bottom of Banner -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:orientation="vertical"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp"
+                android:paddingBottom="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="XBOX 360 RECOMPILATION"
+                    android:textColor="@color/mk_gold_bright"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.15" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="ARM64 NATIVE PORT"
+                    android:textColor="@color/dc_steel_light"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:letterSpacing="0.08" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Clash Divider (Mortal Kombat Gold to DC Blue) -->
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="2dp"
+            android:background="@drawable/divider_mk_dc" />
+
+        <!-- Main Content Body -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
-            android:background="#16222E"
             android:orientation="vertical"
-            android:padding="18dp">
+            android:paddingStart="20dp"
+            android:paddingEnd="20dp"
+            android:paddingTop="20dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Mortal Kombat vs. DC Universe"
-                android:textColor="#FFFFFF"
-                android:textSize="20sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/game_status"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="Não instalado"
-                android:textColor="#FFB454"
-                android:textSize="16sp" />
-
-            <TextView
-                android:id="@+id/game_details"
+            <!-- Game / ISO Status Panel -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="6dp"
-                android:text="Nenhuma ISO selecionada"
-                android:textColor="#7E93A8"
-                android:textSize="13sp" />
+                android:background="@drawable/card_panel_highlight_bg"
+                android:orientation="vertical"
+                android:padding="18dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="ESTADO DA ISO"
+                        android:textColor="@color/text_gold"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.1" />
+
+                    <!-- Status Chip -->
+                    <TextView
+                        android:id="@+id/game_status"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/chip_status_bg"
+                        android:text="Não instalado"
+                        android:textColor="@color/status_ready"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="Mortal Kombat vs. DC Universe"
+                    android:textColor="@color/text_white"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/game_details"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="Nenhuma ISO selecionada"
+                    android:textColor="@color/text_muted"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="2dp" />
+            </LinearLayout>
+
+            <!-- Primary Play Button (Burnished Gold & Amber) -->
+            <Button
+                android:id="@+id/btn_play"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:layout_marginTop="20dp"
+                android:background="@drawable/btn_play_primary"
+                android:text="ENTRAR NO COMBATE"
+                android:textColor="#181308"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08"
+                android:drawableStart="@drawable/ic_play_arrow"
+                android:drawableTint="#181308"
+                android:paddingStart="24dp"
+                android:paddingEnd="24dp" />
+
+            <!-- Secondary Actions: 2x2 Grid / Clean Rows -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_pick"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/btn_secondary_action"
+                    android:text="Selecionar ISO"
+                    android:textColor="@color/text_white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:drawableStart="@drawable/ic_disc"
+                    android:drawableTint="@color/mk_gold_primary"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp" />
+
+                <Button
+                    android:id="@+id/btn_controls"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/btn_secondary_action"
+                    android:text="Controles"
+                    android:textColor="@color/text_white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:drawableStart="@drawable/ic_gamepad"
+                    android:drawableTint="@color/dc_blue_glow"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btn_settings"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:background="@drawable/btn_secondary_action"
+                    android:text="Configurações"
+                    android:textColor="@color/text_white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:drawableStart="@drawable/ic_settings"
+                    android:drawableTint="@color/dc_steel_light"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp" />
+
+                <Button
+                    android:id="@+id/btn_about"
+                    android:layout_width="0dp"
+                    android:layout_height="48dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/btn_secondary_action"
+                    android:text="Sobre o Port"
+                    android:textColor="@color/text_white"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:drawableStart="@drawable/ic_info"
+                    android:drawableTint="@color/dc_steel_light"
+                    android:paddingStart="14dp"
+                    android:paddingEnd="14dp" />
+            </LinearLayout>
+
+            <!-- Disclaimer Card / Footer -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="26dp"
+                android:text="Este aplicativo não inclui arquivos protegidos por direitos autorais. Para jogar, utilize uma imagem ISO legalmente obtida de Mortal Kombat vs. DC Universe para Xbox 360."
+                android:textColor="@color/text_dim"
+                android:textSize="11sp"
+                android:lineSpacingExtra="2dp"
+                android:gravity="center" />
+
         </LinearLayout>
-
-        <Button
-            android:id="@+id/btn_pick"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="Selecionar ISO" />
-
-        <Button
-            android:id="@+id/btn_play"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="JOGAR"
-            android:textStyle="bold" />
-
-        <Button
-            android:id="@+id/btn_settings"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="Configurações" />
-
-        <Button
-            android:id="@+id/btn_about"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:text="Sobre" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="28dp"
-            android:text="Este aplicativo não inclui arquivos do jogo. Para jogar, utilize uma cópia legalmente obtida de Mortal Kombat vs. DC Universe para Xbox 360."
-            android:textColor="#5A6B7B"
-            android:textSize="12sp" />
     </LinearLayout>
 </ScrollView>

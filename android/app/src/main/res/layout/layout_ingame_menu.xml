@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/ingame_menu_overlay"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/mk_bg_scrim"
+    android:clickable="true"
+    android:focusable="true"
+    android:visibility="gone">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:overScrollMode="never">
+
+        <LinearLayout
+            android:layout_width="480dp"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_margin="16dp"
+            android:background="@drawable/modal_ingame_bg"
+            android:orientation="vertical"
+            android:padding="22dp">
+
+            <!-- Header Row -->
+            <RelativeLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_alignParentStart="true"
+                    android:layout_toStartOf="@+id/btn_menu_close"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="MORTAL KOMBAT vs. DC UNIVERSE"
+                        android:textColor="@color/mk_gold_bright"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.12" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="MENU DO PORT // PAUSA"
+                        android:textColor="@color/text_white"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:letterSpacing="0.05" />
+                </LinearLayout>
+
+                <!-- Close / Resume Button -->
+                <ImageButton
+                    android:id="@+id/btn_menu_close"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_alignParentEnd="true"
+                    android:layout_centerVertical="true"
+                    android:background="@drawable/btn_secondary_action"
+                    android:src="@drawable/ic_close"
+                    android:tint="@color/text_muted"
+                    android:contentDescription="Fechar menu" />
+            </RelativeLayout>
+
+            <!-- Clash Divider -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="2dp"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/divider_mk_dc" />
+
+            <!-- Session Info -->
+            <TextView
+                android:id="@+id/ingame_session_info"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Sessão ativa • Xbox 360 ARM64"
+                android:textColor="@color/text_muted"
+                android:textSize="11sp"
+                android:letterSpacing="0.04" />
+
+            <!-- Action 1: Continuar Combate (Primary Action) -->
+            <Button
+                android:id="@+id/btn_menu_resume"
+                android:layout_width="match_parent"
+                android:layout_height="50dp"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/btn_play_primary"
+                android:text="CONTINUAR COMBATE"
+                android:textColor="#181308"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08"
+                android:drawableStart="@drawable/ic_play_arrow"
+                android:drawableTint="#181308"
+                android:paddingStart="18dp"
+                android:paddingEnd="18dp" />
+
+            <!-- Action 2: Ajustar Controles na Tela -->
+            <Button
+                android:id="@+id/btn_menu_controls"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/btn_secondary_action"
+                android:text="Ajustar Controles na Tela"
+                android:textColor="@color/text_white"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:drawableStart="@drawable/ic_gamepad"
+                android:drawableTint="@color/mk_gold_primary"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp" />
+
+            <!-- Action 3: Alternar HUD / FPS -->
+            <Button
+                android:id="@+id/btn_menu_hud"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/btn_secondary_action"
+                android:text="Alternar HUD de Desempenho / FPS"
+                android:textColor="@color/text_white"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:drawableStart="@drawable/ic_gauge"
+                android:drawableTint="@color/dc_blue_glow"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp" />
+
+            <!-- Action 4: Reiniciar Sessão -->
+            <Button
+                android:id="@+id/btn_menu_restart"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/btn_secondary_action"
+                android:text="Reiniciar Partida"
+                android:textColor="@color/text_white"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                android:drawableStart="@drawable/ic_restart"
+                android:drawableTint="@color/text_muted"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp" />
+
+            <!-- Action 5: Sair do Port (Danger Action) -->
+            <Button
+                android:id="@+id/btn_menu_exit"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/btn_danger_action"
+                android:text="SAIR DO PORT"
+                android:textColor="@color/text_white"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.08"
+                android:drawableStart="@drawable/ic_exit"
+                android:drawableTint="@color/text_white"
+                android:paddingStart="18dp"
+                android:paddingEnd="18dp" />
+
+        </LinearLayout>
+    </ScrollView>
+</FrameLayout>

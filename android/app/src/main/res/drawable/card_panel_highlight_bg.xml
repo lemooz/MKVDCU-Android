@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/mk_bg_surface" />
+            <stroke
+                android:width="1.5dp"
+                android:color="@color/mk_gold_muted" />
+            <corners android:radius="8dp" />
+        </shape>
+    </item>
+    <item android:bottom="2dp" android:left="2dp" android:right="2dp" android:top="2dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/mk_bg_card" />
+            <corners android:radius="6dp" />
+        </shape>
+    </item>
+</layer-list>
