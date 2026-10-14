@@ -182,6 +182,7 @@ void PerfOverlay::OnClose() {
 }
 
 void PerfOverlay::OnDraw(ImGuiIO& io) {
+  if (!REXCVAR_GET(port_perf_overlay)) return;
   const telemetry::FrameStats frames = telemetry::ComputeFrameStats(5.0);
   const telemetry::SystemSnapshot system =
       host_->sampler ? host_->sampler->Latest() : telemetry::SystemSnapshot{};
@@ -237,10 +238,22 @@ void PerfOverlay::DrawCompact(const telemetry::FrameStats& frames,
   const telemetry::GuestOutputSize size = telemetry::LastGuestOutputSize();
   if (size.width) {
     ImGui::SameLine();
-    ImGui::TextColored(kLabel, "%ux%u %dx", size.width, size.height, ScaleSetting());
+    ImGui::TextColored(kLabel, "%ux%u swap", size.width, size.height);
+#if defined(__ANDROID__)
+    ImGui::SameLine();
+    ImGui::TextColored(kLabel, "request %.2fx", rex::cvar::Query<int32_t>("port_internal_resolution_percent") / 100.0f);
+#else
+    ImGui::SameLine();
+    ImGui::TextColored(kLabel, "%dx", ScaleSetting());
+#endif
   }
   telemetry::RecentFrameTimes(frame_times_, 180);
 #if defined(__ANDROID__)
+  ImGui::Text("RAM RSS: %.0f MiB | texture budget: %d/%d MiB | cap: %d FPS",
+      system.working_set_bytes / 1048576.0,
+      rex::cvar::Query<int32_t>("texture_cache_memory_limit_soft"),
+      rex::cvar::Query<int32_t>("texture_cache_memory_limit_hard"),
+      rex::cvar::Query<int32_t>("gpu_frame_rate_limit"));
   const int gpu_timing_interval = rex::cvar::Query<int32_t>("vulkan_gpu_timing_interval");
   if (gpu_timing_interval > 0 && system.gpu_submission_ms >= 0)
     ImGui::Text("GPU / submit sampled 1/%d: %.2f ms", gpu_timing_interval, system.gpu_submission_ms);

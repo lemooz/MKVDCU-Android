@@ -61,3 +61,14 @@ Normal and optional diagnostic APKs use the same package ID/signing key. Native-
 versionName `0.1.2`, versionCode `3`. UI update: redesigned launcher, MK/DC theme and banner, status/selected-driver display, direct control-editor access, on-screen MENU action and in-game session menu with HUD/control/session actions. Retains the native renderer and driver changes from v0.1.1.
 
 Release and Diagnostic APKs packaged from the existing verified ARM64 outputs. This is a UI update, not a new claim of GPU compatibility or FPS improvement. New menu/session actions have not been physically validated in this publication round.
+
+
+## v0.1.5 prerelease
+
+versionName `0.1.5`, versionCode `6`. Adds the launcher GitHub updater with optional prereleases, bounded cancellable downloads, SHA-256 checking, same-signer/package/variant validation, ARM64 ELF checks and Android-confirmed installation. Older releases are rejected by SemVer and by APK versionCode.
+
+Includes cumulative renderer, HUD, ISO descriptor lifetime and experimental PanVK Bionic dependency improvements since v0.1.2. Sub-native resolution affects the backbuffer and does not scale every 3D pass. No 30/60 FPS or new physical Adreno validation is claimed.
+
+Both real ARM64 APK variants passed provenance checks. The normal APK was installed on Samsung A54; live GitHub lookup and downgrade blocking were verified. A complete future-version in-app upgrade remains to be validated.
+
+Future releases must increment versionCode and attach each versioned APK plus a matching `<apk-name>.sha256` sidecar; the updater defaults to include prereleases. Keep the same signing key.

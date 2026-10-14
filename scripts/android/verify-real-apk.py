@@ -85,10 +85,13 @@ def main():
                 required = {'Java_org_mkvdcu_android_DriverNative_configure',
                             'Java_org_mkvdcu_android_DriverNative_probe',
                             'Java_org_mkvdcu_android_DriverNative_identity',
+                            'Java_org_mkvdcu_android_DriverNative_configureCpuLimit',
+                            'Java_org_mkvdcu_android_DriverNative_setPresentPreWaitBenchmark',
+                            'Java_org_mkvdcu_android_DriverNative_setPresentQueueBenchmark',
                             'Java_org_mkvdcu_android_DriverNative_setDiagnosticMode'}
                 if missing := required - exports:
                     raise ValueError(f'Driver JNI missing: {missing}')
-            if name == 'librexgpu-xenos.so' and 'Java_org_mkvdcu_android_DriverNative_armCapture' not in exports:
+            if name == 'librexgpu-xenos.so' and not {'Java_org_mkvdcu_android_DriverNative_armCapture', 'Java_org_mkvdcu_android_DriverNative_armRenderExtentProbe'}.issubset(exports):
                 raise ValueError('GPU library lacks the bounded frame capture JNI')
             if name == 'libpanvk_loader_hook.so':
                 required = {'mkvdcu_panvk_initialize_loader_hook', 'android_dlopen_ext', 'android_load_sphal_library'}

@@ -14,6 +14,23 @@
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
+REXCVAR_DEFINE_INT32(port_internal_resolution_percent, 100, "Port/Graphics",
+                    "MKVDCU guest render dimensions: 100=1280x720, 75=960x540, 50=640x360")
+    .range(50, 100).lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+extern "C" unsigned int mkvdcu_internal_width() {
+  const int requested = REXCVAR_GET(port_internal_resolution_percent);
+  const unsigned int percent = requested == 50 || requested == 75 ? requested : 100;
+  const unsigned int width = 1280 * percent / 100;
+  REXLOG_INFO("[INTERNAL_RESOLUTION] HD device init requested={} effective={}x{} scale={}%",
+              requested, width, 720 * percent / 100, percent);
+  return width;
+}
+extern "C" unsigned int mkvdcu_internal_height() {
+  const int requested = REXCVAR_GET(port_internal_resolution_percent);
+  return requested == 50 ? 360 : requested == 75 ? 540 : 720;
+}
+
 #if defined(_WIN32)
 REXCVAR_DEFINE_STRING(port_gpu_backend, "d3d12", "Port/System",
                       "Graphics backend: d3d12 or vulkan")

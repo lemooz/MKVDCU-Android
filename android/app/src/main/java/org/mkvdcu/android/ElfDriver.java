@@ -20,6 +20,10 @@ final class ElfDriver {
         return missing;
     }
     // Termux also uses Bionic with versioned SONAMEs (e.g. libzstd.so.1).
+    static List<String> dependenciesForImport(File file, Set<String> bundled) throws IOException {
+        // Read only. prepare() still removes build paths before any execution.
+        return new ArrayList<>(inspect(file, bundled, true).dependencies);
+    }
     // A suffix alone is not evidence of glibc. Every bundled helper is inspected.
     private static boolean libraryName(String name) {
         return name.matches("[A-Za-z0-9_][A-Za-z0-9_+.-]*\\.so(?:\\.[0-9]+)*");

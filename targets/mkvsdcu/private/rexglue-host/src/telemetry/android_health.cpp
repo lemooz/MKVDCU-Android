@@ -61,6 +61,8 @@ Java_org_mkvdcu_android_GameActivity_nativeReadPerformanceSnapshot(JNIEnv* env, 
   text << frames.total_frames << ',' << frames.fps << ',' << frames.avg_ms << ',' << frames.median_ms
        << ',' << frames.p95_ms << ',' << frames.p99_ms
        << ',' << rex::diagnostics::PerformanceSummary();
+  const auto output = telemetry::LastGuestOutputSize();
+  text << " output=" << output.width << 'x' << output.height;
   return env->NewStringUTF(text.str().c_str());
 }
 #endif

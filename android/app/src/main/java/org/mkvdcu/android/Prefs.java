@@ -28,6 +28,8 @@ final class Prefs {
     void setPendingGameDriver(String id) { sp.edit().putString("pending_game_driver", id).commit(); }
     boolean diagnostics() { return sp.getBoolean("diagnostics", BuildConfig.DIAGNOSTIC_DEFAULT); }
     void setDiagnostics(boolean value) { sp.edit().putBoolean("diagnostics", value).apply(); }
+    boolean isPerformanceOverlayEnabled() { return sp.getBoolean("perf_overlay_enabled", false); }
+    void setPerformanceOverlayEnabled(boolean value) { sp.edit().putBoolean("perf_overlay_enabled", value).apply(); }
 
     void setIsoUri(String uri) {
         sp.edit().putString(KEY_ISO_URI, uri).apply();

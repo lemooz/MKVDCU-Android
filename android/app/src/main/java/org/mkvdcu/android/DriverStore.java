@@ -12,7 +12,7 @@ import java.util.zip.*;
 
 /** Imported drivers are executable native code, kept entirely in app-private storage. */
 final class DriverStore {
-    static final int PROBE_VERSION = 202610135;
+    static final int PROBE_VERSION = 202610145;
     private static final long MAX_ARCHIVE = 128L * 1024 * 1024;
     private static final long MAX_EXPANDED = 256L * 1024 * 1024;
     private final Context context;
@@ -20,9 +20,14 @@ final class DriverStore {
     static final class Driver {
         String id, kind, name, version, library, packageIssue = "";
         int minApi, turnipMode;
+        boolean panvkLateStencil, presentQueue;
         File directory;
         JSONObject metadata, report;
         String reason() {
+            if (!kind.equals("system") && report != null && report.optBoolean("presentQueueRequested", false) != presentQueue)
+                return "Verifique novamente o driver com a fila de apresentação selecionada";
+            if (kind.equals("panvk") && report != null && report.optBoolean("panvkLateStencil", false) != panvkLateStencil)
+                return "Verifique novamente o driver com a opção stencil PanVK selecionada";
             if (kind.equals("turnip") && report != null && report.optInt("turnipMode", -1) != turnipMode)
                 return "Verifique novamente o driver com o modo Turnip selecionado";
             if (minApi > Build.VERSION.SDK_INT) return "Requer Android API " + minApi;
@@ -45,6 +50,8 @@ final class DriverStore {
             if (metadata.has("description")) text.append(metadata.optString("description")).append('\n');
             if (new File(directory, "loader-preparation.json").isFile())
                 text.append("Cópia privada preparada: caminhos externos de compilação removidos.\n");
+            if (new File(directory, "app-bionic-dependencies.json").isFile())
+                text.append("Dependências Bionic fornecidas pelo aplicativo (API 36+), em namespace privado.\n");
             if (report != null && report.optJSONObject("capabilities") != null)
                 text.append("Recursos medidos: ").append(report.optJSONObject("capabilities")).append('\n');
             return text.toString();
@@ -52,6 +59,8 @@ final class DriverStore {
         boolean usable() {
             return kind.equals("system") || (packageIssue.isEmpty() && minApi <= Build.VERSION.SDK_INT && report != null &&
                 (!kind.equals("turnip") || report.optInt("turnipMode", -1) == turnipMode) &&
+                (report.optBoolean("presentQueueRequested", false) == presentQueue) &&
+                (!kind.equals("panvk") || report.optBoolean("panvkLateStencil", false) == panvkLateStencil) &&
                 report.optInt("probeVersion") == PROBE_VERSION &&
                 report.optInt("androidApi") == Build.VERSION.SDK_INT &&
                 report.optString("buildFingerprint").equals(Build.FINGERPRINT) && report.optBoolean("ok"));
@@ -95,6 +104,8 @@ final class DriverStore {
         d.name = meta.getString("name"); d.version = meta.optString("packageVersion", "?");
         d.library = meta.getString("libraryName"); d.minApi = meta.getInt("minApi");
         d.kind = GpuDriverKind.classify(d.name, meta.optString("backend"), d.library, meta.optString("vendor"));
+        d.presentQueue = new GraphicsSettings(context).presentQueue();
+        d.panvkLateStencil = d.kind.equals("panvk") && new GraphicsSettings(context).panvkLateStencil();
         d.turnipMode = d.kind.equals("turnip") ? new GraphicsSettings(context).turnipMode() : 0;
         if (d.kind.equals("unknown")) d.packageIssue = "Backend não identificado: use um pacote PanVK, Turnip ou Qualcomm Adreno com metadados correspondentes";
         d.metadata = meta;
@@ -123,7 +134,20 @@ final class DriverStore {
             StringBuilder hex = new StringBuilder();
             for (byte b : digest.digest()) hex.append(String.format(Locale.ROOT, "%02x", b & 255));
             String id = hex.toString();
-            if (new File(root, id).isDirectory()) return get(id);
+            if (new File(root, id).isDirectory()) {
+                Driver existing = get(id);
+                if (existing.kind.equals("panvk")) {
+                    Set<String> existingNames = new HashSet<>();
+                    File[] existingFiles = existing.directory.listFiles();
+                    if (existingFiles == null) throw new IOException("Pacote PanVK inacessível");
+                    for (File file : existingFiles) if (file.isFile()) existingNames.add(file.getName());
+                    if (PanvkDependencies.complete(context, existing.directory, existingNames, existing.library)) {
+                        File oldReport = new File(existing.directory, "probe.json");
+                        if (oldReport.exists() && !oldReport.delete()) throw new IOException("Falha ao invalidar probe antigo");
+                    }
+                }
+                return get(id);
+            }
             long expanded = 0; int entries = 0;
             Set<String> names = new HashSet<>();
             try (ZipFile zip = new ZipFile(archive)) {
@@ -159,6 +183,7 @@ final class DriverStore {
             boolean panvk = (meta.getString("name") + " " + meta.optString("backend") + " " + library)
                     .toLowerCase(Locale.ROOT).matches(".*(panvk|panfrost).*");
             org.json.JSONArray prepared = new org.json.JSONArray();
+            if (panvk) PanvkDependencies.complete(context, stage, names, library);
             for (String name : names) if (name.contains(".so")) {
                 File binary = new File(stage, name);
                 if (ElfDriver.prepare(binary, names)) {

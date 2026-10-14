@@ -23,6 +23,8 @@
 #include <rex/ppc/context.h>
 #include <rex/ppc/func.h>
 #include <rex/diagnostics/health.h>
+#include <rex/cvar.h>
+#include <rex/logging.h>
 
 namespace {
 constexpr size_t kHistory = 2048;  // ~34 s at 60 FPS
@@ -71,8 +73,14 @@ void RecordSwap(PPCContext& ctx, uint8_t* base) {
   const auto* words = reinterpret_cast<const uint32_t*>(base + fetch_address);
   uint32_t* out = reinterpret_cast<uint32_t*>(&fetch);
   for (int i = 0; i < 6; ++i) out[i] = rex::byte_swap(words[i]);
-  g_output_width.store(fetch.size_2d.width + 1, std::memory_order_relaxed);
-  g_output_height.store(fetch.size_2d.height + 1, std::memory_order_relaxed);
+  const uint32_t width = fetch.size_2d.width + 1, height = fetch.size_2d.height + 1;
+  if (g_output_width.load(std::memory_order_relaxed) != width ||
+      g_output_height.load(std::memory_order_relaxed) != height) {
+    REXLOG_INFO("[OUTPUT_RESOLUTION] observed_swap={}x{} requested_internal_percent={}",
+        width, height, rex::cvar::Query<int32_t>("port_internal_resolution_percent"));
+  }
+  g_output_width.store(width, std::memory_order_relaxed);
+  g_output_height.store(height, std::memory_order_relaxed);
 }
 
 PPCFunc* RuntimeVdSwap() {

@@ -1,0 +1,36 @@
+{
+  "revision": 1,
+  "minimumAndroidApi": 36,
+  "source": "Termux packages, Bionic/aarch64; private PanVK namespace only",
+  "packages": [
+    "libdrm 2.4.134",
+    "zlib 1.3.2",
+    "zstd 1.5.7-1",
+    "libc++ 30"
+  ],
+  "sourceRepositories": [
+    "https://github.com/termux/termux-packages",
+    "https://gitlab.freedesktop.org/mesa/drm",
+    "https://github.com/madler/zlib",
+    "https://github.com/facebook/zstd",
+    "https://github.com/llvm/llvm-project"
+  ],
+  "libraries": [
+    {
+      "name": "libdrm.so",
+      "sha256": "0e4e8f0bbc6809589206a757759a6506e0aa7c88e0b55de2fe8d54f7ef6a3323"
+    },
+    {
+      "name": "libz.so.1",
+      "sha256": "c47748ed4b6ca6a2ecd664bab04795f3493956ab1f5cddc4ba0efa737ef3b711"
+    },
+    {
+      "name": "libzstd.so.1",
+      "sha256": "1677d5e828c1839f111f0261697c08f99a5e4e80434659ab88e5ff859a1374f7"
+    },
+    {
+      "name": "libc++_shared.so",
+      "sha256": "05bef9d3901910c3ff8ab450b03bc8b28383d363a2290f2f7b9aed7331ea6ff7"
+    }
+  ]
+}

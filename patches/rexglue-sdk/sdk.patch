@@ -226,7 +226,7 @@ index 0000000..ea8f1ac
 +}  // namespace rex::diagnostics
 diff --git a/include/rex/diagnostics/performance.h b/include/rex/diagnostics/performance.h
 new file mode 100644
-index 0000000..000aa74
+index 0000000..046e21b
 --- /dev/null
 +++ b/include/rex/diagnostics/performance.h
 @@ -0,0 +1,29 @@
@@ -241,7 +241,7 @@ index 0000000..000aa74
 +  OcclusionReadbackCpu, SubmissionRetirementCpu, QueueAcquireCpu, QueueSubmitCpu,
 +  SubmissionReplayCpu, PipelineWaitCpu, WaitFrameThrottle, WaitMemexport,
 +  WaitResolve, WaitOcclusion, WaitDiagnostic, WaitDescriptorReuse, WaitExplicitSync,
-+  PresentNativeFenceCpu, Count
++  PresentNativeFenceCpu, PresentReadyWaitCpu, PresentQueueAcquireCpu, PresentCallCpu, Count
 +};
 +REX_HEALTH_API void EnablePerformance(bool enabled);
 +REX_HEALTH_API void RecordPerformance(PerformanceStage stage, uint64_t nanoseconds);
@@ -2358,10 +2358,18 @@ index 0000000..44dc457
 +
 +#endif  // REX_PLATFORM_ANDROID
 diff --git a/src/core/threading_posix.cpp b/src/core/threading_posix.cpp
-index 9ac8d15..ccecd65 100644
+index 9ac8d15..7dd9c4e 100644
 --- a/src/core/threading_posix.cpp
 +++ b/src/core/threading_posix.cpp
-@@ -45,12 +45,12 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
+@@ -17,6 +17,7 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
+ #include <array>
+ #include <cerrno>
+ #include <cstddef>
++#include <cstdlib>
+ #include <ctime>
+ #include <deque>
+ #include <limits>
+@@ -45,12 +46,12 @@ static_assert(REX_PLATFORM_LINUX || REX_PLATFORM_MAC, "This file is POSIX-only")
  #if REX_PLATFORM_ANDROID
  #include <dlfcn.h>
  
@@ -2377,7 +2385,7 @@ index 9ac8d15..ccecd65 100644
  #define REX_HAS_SIGEV_THREAD_ID 1
  #ifdef __GLIBC__
  #define sigev_notify_thread_id _sigev_un._tid
-@@ -270,8 +270,9 @@ static sem_t* RexCreateAnonymousSemaphore() {
+@@ -270,8 +271,9 @@ static sem_t* RexCreateAnonymousSemaphore() {
  class PosixConditionBase {
   public:
    PosixConditionBase() {
@@ -2388,7 +2396,7 @@ index 9ac8d15..ccecd65 100644
      pthread_mutexattr_t attr;
      if (pthread_mutexattr_init(&attr) == 0) {
        if (pthread_mutexattr_setrobust(&attr, PTHREAD_MUTEX_ROBUST) == 0) {
-@@ -290,7 +291,7 @@ class PosixConditionBase {
+@@ -290,7 +292,7 @@ class PosixConditionBase {
    WaitResult Wait(std::chrono::milliseconds timeout) {
      bool executed;
      auto predicate = [this] { return this->signaled(); };
@@ -2397,7 +2405,7 @@ index 9ac8d15..ccecd65 100644
      auto native_mutex = static_cast<pthread_mutex_t*>(mutex_.native_handle());
      int lock_result = pthread_mutex_lock(native_mutex);
      if (lock_result == EOWNERDEAD) {
-@@ -344,7 +345,7 @@ class PosixConditionBase {
+@@ -344,7 +346,7 @@ class PosixConditionBase {
        locks.reserve(handles.size());
  
        for (size_t i = 0; i < handles.size(); ++i) {
@@ -2406,7 +2414,7 @@ index 9ac8d15..ccecd65 100644
          auto native_mutex = static_cast<pthread_mutex_t*>(handles[i]->mutex_.native_handle());
          int result = pthread_mutex_trylock(native_mutex);
          if (result == 0 || result == EOWNERDEAD) {
-@@ -367,7 +368,11 @@ class PosixConditionBase {
+@@ -367,7 +369,11 @@ class PosixConditionBase {
  
        if (!all_locked) {
          locks.clear();
@@ -2419,7 +2427,7 @@ index 9ac8d15..ccecd65 100644
          continue;
        }
  
-@@ -414,9 +419,10 @@ class PosixConditionBase {
+@@ -414,9 +420,10 @@ class PosixConditionBase {
        if (timeout == std::chrono::milliseconds::max()) {
          std::this_thread::sleep_for(std::chrono::milliseconds(1));
        } else {
@@ -2433,6 +2441,32 @@ index 9ac8d15..ccecd65 100644
        }
      }
    }
+@@ -795,6 +802,14 @@ class PosixCondition<Thread> : public PosixConditionBase {
+ 
+   void set_affinity_mask(uint64_t mask) {
+     WaitStarted();
++#if REX_PLATFORM_ANDROID
++    // Xbox logical-CPU affinity must not escape the user's host CPU budget.
++    // Guest CPU numbers need not intersect the selected Android CPU IDs.
++    if (const char* configured = std::getenv("MKVDCU_ANDROID_CPU_MASK")) {
++      const uint64_t allowed = std::strtoull(configured, nullptr, 16);
++      if (allowed) mask = (mask & allowed) ? (mask & allowed) : allowed;
++    }
++#endif
+ #if defined(__APPLE__)
+     // macOS doesn't expose Linux-style pthread affinity masks; keep this a
+     // no-op so higher layers can build and run.
+@@ -809,7 +824,9 @@ class PosixCondition<Thread> : public PosixConditionBase {
+     }
+ #if REX_PLATFORM_ANDROID
+     if (sched_setaffinity(pthread_gettid_np(thread_), sizeof(cpu_set_t), &cpu_set) != 0) {
+-      assert_always();
++      // Android may change cpusets or offline a CPU while resuming the app.
++      // Retain the current valid mask rather than crashing the guest thread.
++      REXLOG_WARN("Android thread affinity rejected: errno={}; current mask retained", errno);
+     }
+ #else
+     if (pthread_setaffinity_np(thread_, sizeof(cpu_set_t), &cpu_set) != 0) {
 diff --git a/src/core/timer_queue.cpp b/src/core/timer_queue.cpp
 index 5cfea05..92be3f9 100644
 --- a/src/core/timer_queue.cpp
@@ -2519,7 +2553,7 @@ index 0d8f8af..599872b 100644
          glslang
          MachineIndependent
 diff --git a/src/graphics/command_processor.cpp b/src/graphics/command_processor.cpp
-index a744375..ff47c50 100644
+index a744375..9c15503 100644
 --- a/src/graphics/command_processor.cpp
 +++ b/src/graphics/command_processor.cpp
 @@ -36,6 +36,10 @@
@@ -2541,7 +2575,7 @@ index a744375..ff47c50 100644
 +  // thread without blocking this worker. Pace guest swaps independently so
 +  // titles whose simulation advances per swap keep their intended speed.
 +  const int32_t frame_rate_limit = REXCVAR_GET(gpu_frame_rate_limit);
-+  if (REXCVAR_GET(vsync) && frame_rate_limit > 0) {
++  if (frame_rate_limit > 0) {
 +    using Clock = std::chrono::steady_clock;
 +    const auto interval = std::chrono::duration_cast<Clock::duration>(
 +        std::chrono::duration<double>(1.0 / frame_rate_limit));
@@ -3388,10 +3422,10 @@ index 305380e..aca4883 100644
      copy_dest_extent_end = copy_dest_base_adjusted;
    }
 diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
-index 001f36b..9e0452c 100644
+index 001f36b..c1e4e3a 100644
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
-@@ -9,16 +9,22 @@
+@@ -9,16 +9,23 @@
   * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
   */
  
@@ -3399,6 +3433,7 @@ index 001f36b..9e0452c 100644
 +
  #include <algorithm>
  #include <array>
++#include <atomic>
 +#include <cmath>
 +#include <chrono>
  #include <cstdint>
@@ -3414,18 +3449,19 @@ index 001f36b..9e0452c 100644
  #include <vector>
  
  #include <SPIRV/GlslangToSpv.h>
-@@ -27,6 +33,10 @@
+@@ -27,6 +34,11 @@
  #include <rex/cvar.h>
  #include <rex/dbg.h>
  #include <rex/logging.h>
 +#include <rex/diagnostics/performance.h>
 +#ifdef __ANDROID__
 +#include <rex/graphics/vulkan/frame_capture.h>
++#include <jni.h>
 +#endif
  #include <rex/math.h>
  #include <rex/graphics/util/draw.h>
  #include <rex/graphics/flags.h>
-@@ -55,9 +65,9 @@ REXCVAR_DEFINE_BOOL(vulkan_readback_memexport, false, "GPU/Vulkan",
+@@ -55,9 +67,9 @@ REXCVAR_DEFINE_BOOL(vulkan_readback_memexport, false, "GPU/Vulkan",
                      "Read data written by memory export in shaders on the CPU")
      .lifecycle(rex::cvar::Lifecycle::kHotReload);
  
@@ -3437,7 +3473,7 @@ index 001f36b..9e0452c 100644
      .lifecycle(rex::cvar::Lifecycle::kHotReload);
  
  REXCVAR_DEFINE_BOOL(vulkan_submit_on_primary_buffer_end, true, "GPU/Vulkan",
-@@ -69,6 +79,30 @@ REXCVAR_DEFINE_BOOL(vulkan_dynamic_rendering, true, "GPU/Vulkan",
+@@ -69,6 +81,38 @@ REXCVAR_DEFINE_BOOL(vulkan_dynamic_rendering, true, "GPU/Vulkan",
                      "device (falls back to render passes otherwise)")
      .lifecycle(rex::cvar::Lifecycle::kHotReload);
  
@@ -3465,10 +3501,18 @@ index 001f36b..9e0452c 100644
 +                    "Android: bypass 10-bit gamma ramp table in swapchain presentation")
 +    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 +
++#ifdef __ANDROID__
++namespace { std::atomic<uint64_t> extent_probe_epoch{0}; }
++extern "C" JNIEXPORT void JNICALL
++Java_org_mkvdcu_android_DriverNative_armRenderExtentProbe(JNIEnv*, jclass) {
++  extent_probe_epoch.fetch_add(1, std::memory_order_release);
++}
++#endif
++
  namespace rex::graphics::vulkan {
  
  namespace {
-@@ -325,6 +359,37 @@ void main() {
+@@ -325,6 +369,37 @@ void main() {
  )";
  }
  
@@ -3506,7 +3550,7 @@ index 001f36b..9e0452c 100644
  const char* GetSwapApplyGammaTablePixelRbSwapSource() {
    return R"(#version 450
  layout(set = 0, binding = 0) uniform textureBuffer xe_apply_gamma_ramp;
-@@ -930,10 +995,11 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -930,10 +1005,11 @@ bool VulkanCommandProcessor::SetupContext() {
      return false;
    }
    if (!device_properties.vertexPipelineStoresAndAtomics) {
@@ -3522,7 +3566,7 @@ index 001f36b..9e0452c 100644
    }
    if (!device_properties.geometryShader) {
      if (REXCVAR_GET(vulkan_require_geometry_shader)) {
-@@ -1207,6 +1273,24 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -1207,6 +1283,24 @@ bool VulkanCommandProcessor::SetupContext() {
    }
  
    // Gamma ramp buffer views.
@@ -3547,7 +3591,7 @@ index 001f36b..9e0452c 100644
    uint32_t gamma_ramp_frame_count =
        gamma_ramp_upload_buffer_ == VK_NULL_HANDLE ? kMaxFramesInFlight : 1;
    VkBufferViewCreateInfo gamma_ramp_buffer_view_create_info;
-@@ -1725,36 +1809,42 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -1725,36 +1819,42 @@ bool VulkanCommandProcessor::SetupContext() {
          device, VK_NULL_HANDLE, 1, &swap_apply_gamma_pipeline_create_info, nullptr,
          swap_apply_gamma_pipelines[i]);
    }
@@ -3619,7 +3663,7 @@ index 001f36b..9e0452c 100644
    }
    dfn.vkDestroyShaderModule(device, swap_apply_gamma_pipeline_stages[0].module, nullptr);
    for (VkShaderModule swap_apply_gamma_pixel_shader : swap_apply_gamma_pixel_shaders) {
-@@ -1898,6 +1988,16 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -1898,6 +1998,16 @@ bool VulkanCommandProcessor::SetupContext() {
  
  void VulkanCommandProcessor::ShutdownContext() {
    AwaitAllQueueOperationsCompletion();
@@ -3636,7 +3680,7 @@ index 001f36b..9e0452c 100644
    InvalidateAllVertexBufferResidency();
    ShutdownOcclusionQueryResources();
  
-@@ -1985,6 +2085,10 @@ void VulkanCommandProcessor::ShutdownContext() {
+@@ -1985,6 +2095,10 @@ void VulkanCommandProcessor::ShutdownContext() {
                                           swap_apply_gamma_256_entry_table_pipeline_);
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
                                           swap_apply_gamma_256_entry_table_fxaa_luma_pipeline_);
@@ -3647,7 +3691,7 @@ index 001f36b..9e0452c 100644
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyRenderPass, device,
                                           swap_apply_gamma_render_pass_);
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
-@@ -2271,7 +2375,9 @@ void VulkanCommandProcessor::OnGammaRampPWLValueWritten() {
+@@ -2271,7 +2385,9 @@ void VulkanCommandProcessor::OnGammaRampPWLValueWritten() {
  
  void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
                                         uint32_t frontbuffer_height) {
@@ -3657,7 +3701,7 @@ index 001f36b..9e0452c 100644
    vertex_buffers_in_sync_[0] = 0;
    vertex_buffers_in_sync_[1] = 0;
  
-@@ -2306,15 +2412,31 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2306,15 +2422,31 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
  
    SwapPostEffect swap_post_effect = GetActualSwapPostEffect();
  
@@ -3692,7 +3736,7 @@ index 001f36b..9e0452c 100644
    if (swap_texture_view == VK_NULL_HANDLE) {
      REXGPU_ERROR("XELOG_GPU PRESENT: swap_texture_view=NULL");
      return;
-@@ -2512,6 +2634,22 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2512,6 +2644,22 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
            }
          }
          bool use_compute_gamma = swap_apply_gamma_compute_pipeline != VK_NULL_HANDLE;
@@ -3715,7 +3759,7 @@ index 001f36b..9e0452c 100644
  
          // TODO(Triang3l): FXAA can result in more than 8 bits of precision.
          context.SetIs8bpc(!use_pwl_gamma_ramp && !use_fxaa);
-@@ -2546,11 +2684,41 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2546,11 +2694,41 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
                gamma_ramp_pwl_upload_entry.base = gamma_ramp_pwl_entry.delta;
                gamma_ramp_pwl_upload_entry.delta = gamma_ramp_pwl_entry.base;
              }
@@ -3761,7 +3805,7 @@ index 001f36b..9e0452c 100644
            }
            bool gamma_ramp_has_upload_buffer = gamma_ramp_upload_buffer_memory_ != VK_NULL_HANDLE;
            VkPipelineStageFlags gamma_ramp_read_stage_mask =
-@@ -2873,39 +3041,104 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2873,39 +3051,104 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
            scissor.extent.height = guest_output_height;
            SetScissor(scissor);
  
@@ -3893,7 +3937,7 @@ index 001f36b..9e0452c 100644
  
            // Insert the release barrier.
            PushImageMemoryBarrier(vulkan_context.image(), guest_output_subresource_range,
-@@ -2924,6 +3157,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2924,6 +3167,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
          return true;
        });
  
@@ -3906,7 +3950,7 @@ index 001f36b..9e0452c 100644
    // End the frame even if did not present for any reason (the image refresher
    // was not called), to prevent leaking per-frame resources.
    EndSubmission(true);
-@@ -3095,28 +3334,58 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3095,28 +3344,78 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
    bool use_dynamic_rendering =
        REXCVAR_GET(vulkan_dynamic_rendering) && vulkan_device->properties().dynamicRendering;
  
@@ -3943,6 +3987,26 @@ index 001f36b..9e0452c 100644
 +          framebuffer->host_extent.height, (bottom + 31) & ~INT64_C(31)) - render_area.offset.y);
 +    }
 +  }
++#ifdef __ANDROID__
++  // Scalar state capture only: no image usage/layout changes, GPU stall or
++  // readback. Armed explicitly; bounded to 3 frames and 64 distinct states.
++  static uint64_t extent_epoch_seen = 0, extent_probe_end_frame = 0;
++  static std::unordered_set<std::string> extent_states;
++  const uint64_t epoch = extent_probe_epoch.load(std::memory_order_acquire);
++  if (epoch != extent_epoch_seen) {
++    extent_epoch_seen = epoch;
++    extent_probe_end_frame = frame_current_ + 3;
++    extent_states.clear();
++  }
++  if (epoch && frame_current_ < extent_probe_end_frame && extent_states.size() < 64) {
++    const std::string state = fmt::format("attachment={}x{} viewport={},{},{},{} scissor={},{},{}x{} area={},{},{}x{}",
++        framebuffer->host_extent.width, framebuffer->host_extent.height,
++        dynamic_viewport_.x, dynamic_viewport_.y, dynamic_viewport_.width, dynamic_viewport_.height,
++        dynamic_scissor_.offset.x, dynamic_scissor_.offset.y, dynamic_scissor_.extent.width, dynamic_scissor_.extent.height,
++        render_area.offset.x, render_area.offset.y, render_area.extent.width, render_area.extent.height);
++    if (extent_states.insert(state).second) REXLOG_INFO("[RENDER_EXTENT] frame={} {}", frame_current_, state);
++  }
++#endif
 +  const bool area_contains_draw =
 +      current_render_area_.offset.x <= render_area.offset.x &&
 +      current_render_area_.offset.y <= render_area.offset.y &&
@@ -3980,7 +4044,7 @@ index 001f36b..9e0452c 100644
  
    if (use_dynamic_rendering) {
      VkRenderingAttachmentInfo color_attachments[xenos::kMaxColorRenderTargets];
-@@ -3125,6 +3394,27 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3125,6 +3424,27 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
      uint32_t color_attachment_count = 0;
      render_target_cache_->GetLastUpdateRenderingAttachments(
          color_attachments, &color_attachment_count, &depth_attachment, &stencil_attachment);
@@ -4008,7 +4072,7 @@ index 001f36b..9e0452c 100644
      bool has_depth = depth_attachment.sType == VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
      bool has_stencil = stencil_attachment.sType == VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
  
-@@ -3132,9 +3422,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3132,9 +3452,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
      rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
      rendering_info.pNext = nullptr;
      rendering_info.flags = 0;
@@ -4019,7 +4083,7 @@ index 001f36b..9e0452c 100644
      rendering_info.layerCount = 1;
      rendering_info.viewMask = 0;
      rendering_info.colorAttachmentCount = color_attachment_count;
-@@ -3148,11 +3436,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3148,11 +3466,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
      render_pass_begin_info.pNext = nullptr;
      render_pass_begin_info.renderPass = render_pass;
      render_pass_begin_info.framebuffer = framebuffer->framebuffer;
@@ -4032,7 +4096,7 @@ index 001f36b..9e0452c 100644
      render_pass_begin_info.clearValueCount = 0;
      render_pass_begin_info.pClearValues = nullptr;
      deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
-@@ -3168,29 +3452,30 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3168,29 +3482,30 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
    const ui::vulkan::VulkanDevice* vulkan_device = GetVulkanDevice();
    bool use_dynamic_rendering =
        REXCVAR_GET(vulkan_dynamic_rendering) && vulkan_device->properties().dynamicRendering;
@@ -4073,7 +4137,7 @@ index 001f36b..9e0452c 100644
  
    if (use_dynamic_rendering) {
      VkRenderingAttachmentInfo color_attachment = {};
-@@ -3502,8 +3787,8 @@ VulkanCommandProcessor::ScratchBufferAcquisition VulkanCommandProcessor::Acquire
+@@ -3502,8 +3817,8 @@ VulkanCommandProcessor::ScratchBufferAcquisition VulkanCommandProcessor::Acquire
    scratch_buffer_ = new_scratch_buffer;
    scratch_buffer_size_ = size;
    // Not used yet, no need for a barrier.
@@ -4084,7 +4148,7 @@ index 001f36b..9e0452c 100644
    scratch_buffer_last_usage_submission_ = submission_current;
    scratch_buffer_used_ = true;
    return ScratchBufferAcquisition(*this, new_scratch_buffer, initial_stage_mask,
-@@ -3587,9 +3872,125 @@ Shader* VulkanCommandProcessor::LoadShader(xenos::ShaderType shader_type, uint32
+@@ -3587,9 +3902,125 @@ Shader* VulkanCommandProcessor::LoadShader(xenos::ShaderType shader_type, uint32
    return pipeline_cache_->LoadShader(shader_type, host_address, dword_count);
  }
  
@@ -4210,7 +4274,7 @@ index 001f36b..9e0452c 100644
  #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
    SCOPE_profile_cpu_f("gpu");
  #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
-@@ -3597,6 +3998,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3597,6 +4028,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
    const RegisterFile& regs = *register_file_;
    (void)index_buffer_info;
    auto draw_fail = [&](const char* stage) {
@@ -4218,7 +4282,7 @@ index 001f36b..9e0452c 100644
      auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
      REXGPU_ERROR(
          "Vulkan IssueDraw failed at {} "
-@@ -3616,6 +4018,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3616,6 +4048,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      return IssueCopy();
    }
  
@@ -4236,7 +4300,7 @@ index 001f36b..9e0452c 100644
    bool surface_pitch_is_zero = regs.Get<reg::RB_SURFACE_INFO>().surface_pitch == 0;
  
    const ui::vulkan::VulkanDevice::Properties& device_properties = GetVulkanDevice()->properties();
-@@ -3631,11 +4044,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3631,11 +4074,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
    pipeline_cache_->AnalyzeShaderUcode(*vertex_shader);
    bool memexport_used_vertex = vertex_shader->memexport_eM_written() != 0;
    if (memexport_used_vertex) {
@@ -4250,7 +4314,7 @@ index 001f36b..9e0452c 100644
      }
      draw_util::AddMemExportRanges(regs, *vertex_shader, memexport_ranges_);
    }
-@@ -3646,7 +4060,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3646,7 +4090,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
    if (surface_pitch_is_zero && is_rasterization_done) {
      // Doesn't actually draw.
      // Unlikely that zero would even really be legal though.
@@ -4259,7 +4323,7 @@ index 001f36b..9e0452c 100644
    }
    VulkanShader* pixel_shader = nullptr;
    if (is_rasterization_done) {
-@@ -3666,7 +4080,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3666,7 +4110,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      // cache.
      if (!memexport_used_vertex) {
        // This draw has no effect.
@@ -4268,7 +4332,7 @@ index 001f36b..9e0452c 100644
      }
    }
    bool memexport_used_pixel = pixel_shader && (pixel_shader->memexport_eM_written() != 0);
-@@ -3675,7 +4089,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3675,7 +4119,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        REXGPU_ERROR(
            "Pixel shader memexport draw encountered without "
            "fragmentStoresAndAtomics support");
@@ -4277,7 +4341,7 @@ index 001f36b..9e0452c 100644
      }
      draw_util::AddMemExportRanges(regs, *pixel_shader, memexport_ranges_);
    }
-@@ -3713,7 +4127,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3713,7 +4157,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      }
      if (!primitive_processing_result.host_draw_vertex_count) {
        // Nothing to draw.
@@ -4286,7 +4350,7 @@ index 001f36b..9e0452c 100644
      }
      if (primitive_processing_result.host_primitive_type == xenos::PrimitiveType::kTriangleFan) {
        // Vulkan uses the same fan-to-list conversion policy as D3D12.
-@@ -3721,7 +4135,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3721,7 +4165,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
            "PrimitiveProcessor returned triangle fan for Vulkan draw; expected "
            "triangle list conversion for D3D12 parity");
        assert_always();
@@ -4295,7 +4359,7 @@ index 001f36b..9e0452c 100644
      }
      // Tessellation and rectangle expansion variants for rasterization are
      // produced by the primitive processor and are handled by the Vulkan
-@@ -3734,7 +4148,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3734,7 +4178,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
          !Shader::IsHostVertexShaderTypeDomain(host_vertex_shader_type)) {
        REXGPU_ERROR("Unsupported Vulkan host vertex shader type {}",
                     uint32_t(host_vertex_shader_type));
@@ -4304,7 +4368,7 @@ index 001f36b..9e0452c 100644
      }
  
      // Shader modifications.
-@@ -3822,7 +4236,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3822,7 +4266,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      uint64_t sampler_overflow_await_submission =
          texture_cache_->GetSubmissionToAwaitOnSamplerOverflow(samplers_overflowed_count);
      assert_true(sampler_overflow_await_submission <= GetCurrentSubmission());
@@ -4314,7 +4378,7 @@ index 001f36b..9e0452c 100644
    }
  
    uint32_t normalized_color_mask =
-@@ -3863,12 +4278,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3863,12 +4308,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
                                                  &pipeline_is_placeholder);
    if (REXCVAR_GET(async_shader_compilation) && pipeline_is_placeholder) {
      frame_used_async_placeholder_pipeline_ = true;
@@ -4330,7 +4394,7 @@ index 001f36b..9e0452c 100644
      deferred_command_buffer_.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
      current_guest_graphics_pipeline_ = pipeline;
      current_external_graphics_pipeline_ = VK_NULL_HANDLE;
-@@ -3894,6 +4311,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3894,6 +4341,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
          descriptor_sets_kept = std::min(
              descriptor_sets_kept, uint32_t(SpirvShaderTranslator::kDescriptorSetTexturesPixel));
        }
@@ -4341,7 +4405,7 @@ index 001f36b..9e0452c 100644
      } else {
        // No or unknown pipeline layout previously bound - all bindings are in an
        // indeterminate state.
-@@ -3986,9 +4407,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3986,9 +4437,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        vfetch_bits_remaining &= ~(uint32_t(1) << j);
        uint32_t vfetch_index = i * 32 + j;
        uint64_t vfetch_bit = uint64_t(1) << (vfetch_index & 63);
@@ -4355,7 +4419,7 @@ index 001f36b..9e0452c 100644
        xenos::xe_gpu_vertex_fetch_t vfetch_constant = regs.GetVertexFetch(vfetch_index);
        switch (vfetch_constant.type) {
          case xenos::FetchConstantType::kVertex:
-@@ -4003,23 +4425,19 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4003,23 +4455,19 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
                "is incorrect behavior, but you can try bypassing this by "
                "launching Xenia with --gpu_allow_invalid_fetch_constants=true.",
                vfetch_index, vfetch_constant.dword_0, vfetch_constant.dword_1);
@@ -4382,7 +4446,7 @@ index 001f36b..9e0452c 100644
        }
        state.address = vfetch_constant.address;
        state.size = vfetch_constant.size;
-@@ -4037,7 +4455,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4037,7 +4485,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
            "Failed to request memexport stream at 0x{:08X} (size {}) in the "
            "shared memory",
            memexport_range_base_bytes, memexport_range.size_bytes);
@@ -4391,7 +4455,7 @@ index 001f36b..9e0452c 100644
      }
      memexport_extent_start = std::min(memexport_extent_start, memexport_range_base_bytes);
      memexport_extent_end =
-@@ -4048,7 +4466,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4048,7 +4496,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        REXGPU_ERROR(
            "Failed to request full shared memory residency for unresolved "
            "memexport destinations");
@@ -4400,7 +4464,7 @@ index 001f36b..9e0452c 100644
      }
    }
  
-@@ -4115,11 +4533,277 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4115,11 +4563,298 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        render_target_cache_->last_update_render_pass(),
        render_target_cache_->last_update_framebuffer());
  
@@ -4667,6 +4731,27 @@ index 001f36b..9e0452c 100644
 +                probe_scissor.extent[0], probe_scissor.extent[1], used_texture_mask,
 +                memexport_used_vertex, current_guest_graphics_pipeline_ != VK_NULL_HANDLE);
 +  }
++#ifdef __ANDROID__
++  static uint64_t draw_extent_epoch_seen = 0, draw_extent_end_frame = 0;
++  static std::unordered_set<std::string> draw_extent_states;
++  const uint64_t draw_extent_epoch = extent_probe_epoch.load(std::memory_order_acquire);
++  if (draw_extent_epoch != draw_extent_epoch_seen) {
++    draw_extent_epoch_seen = draw_extent_epoch;
++    draw_extent_end_frame = frame_current_ + 3;
++    draw_extent_states.clear();
++  }
++  if (draw_extent_epoch && frame_current_ < draw_extent_end_frame && draw_extent_states.size() < 64) {
++    const std::string state = fmt::format("VS={:016X} PS={:016X} vertices={} viewport_guest={}x{} viewport_vk={}x{} scissor={}x{} attachment={}x{}",
++        vertex_shader->ucode_data_hash(), pixel_shader ? pixel_shader->ucode_data_hash() : 0,
++        primitive_processing_result.host_draw_vertex_count,
++        viewport_info.xy_extent[0], viewport_info.xy_extent[1],
++        dynamic_viewport_.width, dynamic_viewport_.height,
++        dynamic_scissor_.extent.width, dynamic_scissor_.extent.height,
++        current_framebuffer_ ? current_framebuffer_->host_extent.width : 0,
++        current_framebuffer_ ? current_framebuffer_->host_extent.height : 0);
++    if (draw_extent_states.insert(state).second) REXLOG_INFO("[DRAW_EXTENT] frame={} {}", frame_current_, state);
++  }
++#endif
    // Draw.
 +  const uint32_t draw_timing = BeginGpuStageTiming(rex::diagnostics::PerformanceStage::GpuDraw);
 +  probe_index_buffer_ = VK_NULL_HANDLE;
@@ -4679,7 +4764,7 @@ index 001f36b..9e0452c 100644
    } else {
      std::pair<VkBuffer, VkDeviceSize> index_buffer;
      switch (primitive_processing_result.index_buffer_type) {
-@@ -4151,9 +4835,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4151,9 +4886,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
              ? VK_INDEX_TYPE_UINT16
              : VK_INDEX_TYPE_UINT32);
      deferred_command_buffer_.CmdVkDrawIndexed(primitive_processing_result.host_draw_vertex_count, 1,
@@ -4697,7 +4782,7 @@ index 001f36b..9e0452c 100644
    // Invalidate textures in memexported memory and watch for changes.
    if (!memexport_ranges_.empty()) {
      for (const draw_util::MemExportRange& memexport_range : memexport_ranges_) {
-@@ -4184,6 +4875,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4184,6 +4926,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
    return true;
  }
  
@@ -4705,7 +4790,7 @@ index 001f36b..9e0452c 100644
  bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFullPath(uint32_t total_size) {
    if (!total_size || memexport_ranges_.empty()) {
      return true;
-@@ -4222,7 +4914,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFullPath(uint32_t total_
+@@ -4222,7 +4965,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFullPath(uint32_t total_
                            VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
                            VK_ACCESS_HOST_READ_BIT);
  
@@ -4714,7 +4799,7 @@ index 001f36b..9e0452c 100644
      REXGPU_ERROR("Failed to await completion of Vulkan memexport readback");
      dfn.vkDestroyBuffer(device, readback_buffer, nullptr);
      dfn.vkFreeMemory(device, readback_memory, nullptr);
-@@ -4297,7 +4989,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_
+@@ -4297,7 +5040,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_
      }
  
      if (readback.buffers[index] != VK_NULL_HANDLE || readback.memories[index] != VK_NULL_HANDLE) {
@@ -4723,7 +4808,7 @@ index 001f36b..9e0452c 100644
          dfn.vkUnmapMemory(device, new_memory);
          dfn.vkDestroyBuffer(device, new_buffer, nullptr);
          dfn.vkFreeMemory(device, new_memory, nullptr);
-@@ -4382,6 +5074,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_
+@@ -4382,6 +5125,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_
  }
  
  bool VulkanCommandProcessor::IssueCopy() {
@@ -4731,7 +4816,7 @@ index 001f36b..9e0452c 100644
  #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
    SCOPE_profile_cpu_f("gpu");
  #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
-@@ -4391,6 +5084,14 @@ bool VulkanCommandProcessor::IssueCopy() {
+@@ -4391,6 +5135,14 @@ bool VulkanCommandProcessor::IssueCopy() {
    }
  
    ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(vulkan_readback_resolve));
@@ -4746,7 +4831,7 @@ index 001f36b..9e0452c 100644
    if (readback_mode == ReadbackResolveMode::kDisabled) {
      uint32_t written_address, written_length;
      return render_target_cache_->Resolve(*memory_, *shared_memory_, *texture_cache_,
-@@ -4420,6 +5121,13 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4420,6 +5172,13 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
    }
  
    ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(vulkan_readback_resolve));
@@ -4760,7 +4845,7 @@ index 001f36b..9e0452c 100644
    if (readback_mode == ReadbackResolveMode::kDisabled) {
      return true;
    }
-@@ -4448,7 +5156,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4448,7 +5207,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
      }
  
      if (readback.buffers[index] != VK_NULL_HANDLE || readback.memories[index] != VK_NULL_HANDLE) {
@@ -4769,7 +4854,7 @@ index 001f36b..9e0452c 100644
          dfn.vkUnmapMemory(device, new_memory);
          dfn.vkDestroyBuffer(device, new_buffer, nullptr);
          dfn.vkFreeMemory(device, new_memory, nullptr);
-@@ -4489,6 +5197,9 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4489,6 +5248,9 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
  
      reg::RB_COPY_DEST_INFO copy_dest_info = register_file_->Get<reg::RB_COPY_DEST_INFO>();
      const FormatInfo* format_info = FormatInfo::Get(uint32_t(copy_dest_info.copy_dest_format));
@@ -4779,7 +4864,7 @@ index 001f36b..9e0452c 100644
      uint32_t bits_per_pixel = format_info->bits_per_pixel;
      if (bits_per_pixel != 8 && bits_per_pixel != 16 && bits_per_pixel != 32 &&
          bits_per_pixel != 64) {
-@@ -4533,7 +5244,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4533,7 +5295,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
        }
        if (resolve_downscale_buffer_ != VK_NULL_HANDLE ||
            resolve_downscale_buffer_memory_ != VK_NULL_HANDLE) {
@@ -4788,7 +4873,7 @@ index 001f36b..9e0452c 100644
            dfn.vkDestroyBuffer(device, new_buffer, nullptr);
            dfn.vkFreeMemory(device, new_memory, nullptr);
            return true;
-@@ -4654,7 +5365,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4654,7 +5416,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
    uint32_t read_index = write_index;
    if (use_delayed_sync) {
      read_index = 1 - write_index;
@@ -4797,7 +4882,7 @@ index 001f36b..9e0452c 100644
      return true;
    }
  
-@@ -4664,7 +5375,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4664,7 +5426,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
                             readback.mapped_data[read_index] == nullptr)) {
      is_cache_miss = true;
      read_index = write_index;
@@ -4806,7 +4891,7 @@ index 001f36b..9e0452c 100644
        return true;
      }
    }
-@@ -4677,10 +5388,60 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4677,10 +5439,60 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
      readback_memory_range.memory = readback.memories[read_index];
      readback_memory_range.offset = 0;
      readback_memory_range.size = VK_WHOLE_SIZE;
@@ -4869,7 +4954,7 @@ index 001f36b..9e0452c 100644
        std::memcpy(destination, readback.mapped_data[read_index], written_length);
      }
    }
-@@ -4867,6 +5628,11 @@ bool VulkanCommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_addres
+@@ -4867,6 +5679,11 @@ bool VulkanCommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_addres
      return false;
    }
  
@@ -4881,7 +4966,7 @@ index 001f36b..9e0452c 100644
    uint32_t host_index = active_occlusion_query_.host_index;
    active_occlusion_query_ = {};
  
-@@ -4886,7 +5652,7 @@ bool VulkanCommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_addres
+@@ -4886,7 +5703,7 @@ bool VulkanCommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_addres
    if (!EndSubmission(false)) {
      return false;
    }
@@ -4890,7 +4975,7 @@ index 001f36b..9e0452c 100644
      return false;
    }
  
-@@ -4943,7 +5709,9 @@ void VulkanCommandProcessor::WriteGuestOcclusionResult(uint32_t sample_count_add
+@@ -4943,7 +5760,9 @@ void VulkanCommandProcessor::WriteGuestOcclusionResult(uint32_t sample_count_add
    sample_counts->StencilFail_B = 0;
  }
  
@@ -4901,7 +4986,7 @@ index 001f36b..9e0452c 100644
    // Only report once, no need to retry a wait that won't succeed anyway.
    if (device_lost_) {
      return;
-@@ -4970,9 +5738,20 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+@@ -4970,9 +5789,20 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
      // defined by vkQueueSubmit additionally include in the first
      // synchronization scope all commands that occur earlier in submission
      // order."
@@ -4925,7 +5010,7 @@ index 001f36b..9e0452c 100644
      if (wait_result == VK_SUCCESS) {
        fences_awaited += await_submission - submission_completed_;
      } else {
-@@ -5088,7 +5867,9 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+@@ -5088,7 +5918,9 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
  }
  
  bool VulkanCommandProcessor::CanEndSubmissionImmediately() const {
@@ -4936,7 +5021,7 @@ index 001f36b..9e0452c 100644
  }
  
  bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
-@@ -5111,7 +5892,43 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+@@ -5111,7 +5943,43 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
    // is still available, and whether the await was successful.
    uint64_t await_submission =
        is_opening_frame ? closed_frame_submissions_[frame_current_ % kMaxFramesInFlight] : 0;
@@ -4981,7 +5066,7 @@ index 001f36b..9e0452c 100644
    if (device_lost_ || submission_completed_ < await_submission) {
      return false;
    }
-@@ -5230,6 +6047,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+@@ -5230,6 +6098,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
  }
  
  bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
@@ -4989,7 +5074,7 @@ index 001f36b..9e0452c 100644
    const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
    const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
    const VkDevice device = vulkan_device->device();
-@@ -5310,7 +6128,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5310,7 +6179,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
  
      EndRenderPass();
  
@@ -5001,7 +5086,7 @@ index 001f36b..9e0452c 100644
  
      render_target_cache_->EndSubmission();
  
-@@ -5385,7 +6206,49 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5385,7 +6257,49 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
        REXGPU_ERROR("Failed to begin a Vulkan command buffer");
        return false;
      }
@@ -5052,7 +5137,7 @@ index 001f36b..9e0452c 100644
      if (dfn.vkEndCommandBuffer(command_buffer.buffer) != VK_SUCCESS) {
        REXGPU_ERROR("Failed to end a Vulkan command buffer");
        return false;
-@@ -5415,8 +6278,11 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5415,8 +6329,11 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
      }
      VkResult submit_result;
      {
@@ -5066,7 +5151,7 @@ index 001f36b..9e0452c 100644
        submit_result = dfn.vkQueueSubmit(queue_acquisition.queue(), 1, &submit_info, fence);
      }
      if (submit_result != VK_SUCCESS) {
-@@ -5430,6 +6296,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5430,6 +6347,7 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
        return false;
      }
      uint64_t submission_current = GetCurrentSubmission();
@@ -5074,7 +5159,7 @@ index 001f36b..9e0452c 100644
      current_submission_wait_stage_masks_.clear();
      for (VkSemaphore semaphore : current_submission_wait_semaphores_) {
        submissions_in_flight_semaphores_.emplace_back(submission_current, semaphore);
-@@ -6242,9 +7109,9 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
+@@ -6242,9 +7160,9 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
        // losing blending correctness, but getting the full range.
        color_exp_bias -= 5;
      }
@@ -7970,7 +8055,7 @@ index 0000000..2cd2fd7
 +}  // namespace rex::diagnostics
 diff --git a/src/system/performance.cpp b/src/system/performance.cpp
 new file mode 100644
-index 0000000..d01206e
+index 0000000..a91305d
 --- /dev/null
 +++ b/src/system/performance.cpp
 @@ -0,0 +1,56 @@
@@ -7991,7 +8076,7 @@ index 0000000..d01206e
 +  "queue_acquire_cpu", "queue_submit_cpu", "submission_replay_cpu", "pipeline_wait_cpu",
 +  "wait_frame_throttle", "wait_memexport", "wait_resolve", "wait_occlusion",
 +  "wait_diagnostic", "wait_descriptor_reuse", "wait_explicit_sync",
-+  "present_native_fence_cpu"};
++  "present_native_fence_cpu", "present_ready_wait_cpu", "present_queue_acquire_cpu", "present_call_cpu"};
 +static_assert(sizeof(names) / sizeof(names[0]) == uint32_t(PerformanceStage::Count));
 +uint64_t Now() {
 +  return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -8949,10 +9034,10 @@ index 0000000..a9c946d
 +}  // namespace rex
 diff --git a/src/ui/vulkan/android_driver.cpp b/src/ui/vulkan/android_driver.cpp
 new file mode 100644
-index 0000000..d6a3b60
+index 0000000..4c406e8
 --- /dev/null
 +++ b/src/ui/vulkan/android_driver.cpp
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,514 @@
 +#include <rex/ui/vulkan/android_driver.h>
 +#include <rex/ui/vulkan/instance.h>
 +#include <rex/ui/vulkan/device.h>
@@ -8974,6 +9059,9 @@ index 0000000..d6a3b60
 +#include <cstdlib>
 +#include <vector>
 +#include <unistd.h>
++#include <sched.h>
++#include <algorithm>
++#include <cerrno>
 +#include "android_driver_smoke.h"
 +#include "android_native_sync.h"
 +#include "../android_driver/panvk_loader_hook.h"
@@ -8996,6 +9084,7 @@ index 0000000..d6a3b60
 +bool loaded_direct_icd = false;
 +bool disable_lossy_afrc = false;
 +int turnip_mode = 0;
++bool panvk_late_stencil = false;
 +std::string JString(JNIEnv* env, jstring s) {
 +  if (!s) return {};
 +  const char* chars = env->GetStringUTFChars(s, nullptr);
@@ -9010,6 +9099,14 @@ index 0000000..d6a3b60
 +  direct_icd = kind == "panvk";
 +  if (frozen) { direct_icd = loaded_direct_icd; return proc_addr; }
 +  frozen = true;
++  if (kind == "panvk") {
++    if (setenv("PANVK_STENCIL_LATE", panvk_late_stencil ? "1" : "0", 1) ||
++        setenv("PANVK_TRACE", "0", 1)) {
++      error = "Falha ao configurar opções PanVK";
++      return nullptr;
++    }
++    REXLOG_INFO("[DRIVER] PanVK late_stencil={} trace=off heaps=driver-default", panvk_late_stencil);
++  }
 +  if (kind == "turnip") {
 +    // Driver options are fixed before any Mesa constructor or Vulkan instance.
 +    // Never enable flushall/syncdraw: those serialize each draw. Auto leaves
@@ -9181,6 +9278,7 @@ index 0000000..d6a3b60
 +  for (auto b : p.pipelineCacheUUID) out << std::setw(2) << std::setfill('0') << unsigned(b);
 +  out << "-renderer-20261013-loader5";
 +  if (kind == "turnip" || kind == "adreno") out << "-adreno6-tumode" << turnip_mode;
++  if (kind == "panvk" && panvk_late_stencil) out << "-late-stencil1";
 +  return out.str();
 +}
 +void AndroidDriverRecordDevice(const VkPhysicalDeviceProperties& p) {
@@ -9188,6 +9286,7 @@ index 0000000..d6a3b60
 +  identity = p.deviceName + std::string(" / ") + reported_driver + " / " + std::to_string(p.driverVersion) +
 +      " / " + kind + (kind == "system" ? "" : "/" + package_id.substr(0, 12));
 +  if (kind == "panvk" && PanvkNativeSyncEnabled()) identity += " / native-fence CPU";
++  if (kind == "panvk" && panvk_late_stencil) identity += " / late stencil";
 +  if (kind == "turnip") identity += turnip_mode == 1 ? " / Sysmem" : turnip_mode == 2 ? " / GMEM" : " / Auto";
 +  REXLOG_INFO("[DRIVER] actual={} vendor=0x{:X} device=0x{:X}", identity, p.vendorID, p.deviceID);
 +}
@@ -9309,7 +9408,8 @@ index 0000000..d6a3b60
 +extern "C" JNIEXPORT jstring JNICALL
 +Java_org_mkvdcu_android_DriverNative_configure(JNIEnv* env, jclass, jstring jkind,
 +    jstring jdir, jstring jlibrary, jstring jhooks, jstring jtmp, jstring jid,
-+    jstring jcache, jobjectArray jdependencies, jboolean jdisable_lossy_afrc, jint jturnip_mode) {
++    jstring jcache, jobjectArray jdependencies, jboolean jdisable_lossy_afrc, jint jturnip_mode,
++    jboolean jpanvk_late_stencil) {
 +  std::lock_guard lock(mutex);
 +  if (frozen) return env->NewStringUTF("O driver já está inicializado; reinicie a sessão");
 +  const auto candidate_kind = JString(env, jkind);
@@ -9322,6 +9422,7 @@ index 0000000..d6a3b60
 +  kind = candidate_kind;
 +  if (jturnip_mode < 0 || jturnip_mode > 2) return env->NewStringUTF("Modo Turnip inválido");
 +  turnip_mode = kind == "turnip" ? jturnip_mode : 0;
++  panvk_late_stencil = kind == "panvk" && jpanvk_late_stencil;
 +  disable_lossy_afrc = kind == "panvk" && jdisable_lossy_afrc;
 +  directory = JString(env, jdir); library = candidate_lib;
 +  hooks = JString(env, jhooks); temporary = JString(env, jtmp); package_id = JString(env, jid);
@@ -9344,6 +9445,77 @@ index 0000000..d6a3b60
 +    }
 +  }
 +  return env->NewStringUTF("");
++}
++extern "C" JNIEXPORT jstring JNICALL
++Java_org_mkvdcu_android_DriverNative_configureCpuLimit(JNIEnv* env, jclass, jint requested,
++                                                     jboolean economy) {
++  // Called only in :game, before Vulkan/SDL/guest workers are created. Imported
++  // driver workers inherit their parent's mask. The launcher/probe stay free.
++  if (requested < 0 || requested > 64) return env->NewStringUTF("Invalid CPU count; Android scheduler retained");
++  if (!requested) {
++    unsetenv("MKVDCU_ANDROID_CPU_MASK");
++    return env->NewStringUTF("CPU: automatic (Android scheduler)");
++  }
++  cpu_set_t available;
++  CPU_ZERO(&available);
++  if (sched_getaffinity(0, sizeof(available), &available))
++    return env->NewStringUTF("CPU: unable to read allowed CPUs; Android scheduler retained");
++  struct Cpu { int id, capacity; };
++  std::vector<Cpu> cpus;
++  bool capacities_known = true;
++  for (int i = 0; i < 64; ++i) if (CPU_ISSET(i, &available)) {
++    int capacity = 0;
++    std::ifstream("/sys/devices/system/cpu/cpu" + std::to_string(i) + "/cpu_capacity") >> capacity;
++    capacities_known &= capacity > 0;
++    cpus.push_back({i, capacity});
++  }
++  if (cpus.empty()) return env->NewStringUTF("CPU: empty allowed mask; Android scheduler retained");
++  if (capacities_known) std::stable_sort(cpus.begin(), cpus.end(), [economy](const Cpu& a, const Cpu& b) {
++    return economy ? a.capacity < b.capacity : a.capacity > b.capacity;
++  });
++  const size_t count = std::min(size_t(requested), cpus.size());
++  cpu_set_t selected;
++  CPU_ZERO(&selected);
++  uint64_t mask = 0;
++  for (size_t i = 0; i < count; ++i) { CPU_SET(cpus[i].id, &selected); mask |= UINT64_C(1) << cpus[i].id; }
++  if (sched_setaffinity(0, sizeof(selected), &selected))
++    return env->NewStringUTF("CPU: affinity request rejected; Android scheduler retained");
++  // Android cpusets may silently intersect the requested mask. Persist and
++  // report the effective mask, rather than a count the kernel did not grant.
++  cpu_set_t effective;
++  CPU_ZERO(&effective);
++  if (sched_getaffinity(0, sizeof(effective), &effective)) {
++    sched_setaffinity(0, sizeof(available), &available);
++    return env->NewStringUTF("CPU: unable to confirm affinity; original mask restored");
++  }
++  mask = 0;
++  size_t effective_count = 0;
++  for (int i = 0; i < 64; ++i) if (CPU_ISSET(i, &effective)) {
++    mask |= UINT64_C(1) << i;
++    ++effective_count;
++  }
++  selected = effective;
++  std::ostringstream encoded; encoded << std::hex << mask;
++  if (setenv("MKVDCU_ANDROID_CPU_MASK", encoded.str().c_str(), 1)) {
++    sched_setaffinity(0, sizeof(available), &available);
++    return env->NewStringUTF("CPU: policy could not be stored; original mask restored");
++  }
++  size_t failed = 0;
++  std::error_code ec;
++  // Java/ART threads already exist. Restrict this dedicated process as well,
++  // so subsequent runtime and imported-driver workers inherit the same limit.
++  std::filesystem::directory_iterator thread("/proc/self/task", ec), end_thread;
++  for (; !ec && thread != end_thread; thread.increment(ec)) {
++    const auto name = thread->path().filename().string();
++    char* end = nullptr; const long tid = std::strtol(name.c_str(), &end, 10);
++    if (end && !*end && tid > 0 && sched_setaffinity(pid_t(tid), sizeof(selected), &selected) && errno != ESRCH) ++failed;
++  }
++  const std::string summary = "CPU: requested=" + std::to_string(requested) + " allowed=" +
++      std::to_string(cpus.size()) + " selected=" + std::to_string(count) + " effective=" + std::to_string(effective_count) + " mask=0x" + encoded.str() +
++      " capacity_ranked=" + std::to_string(capacities_known) + " economy=" + std::to_string(bool(economy)) +
++      " thread_failures=" + std::to_string(failed) + " enumeration_error=" + std::to_string(ec.value());
++  REXLOG_INFO("[CPU_POLICY] {}", summary);
++  return env->NewStringUTF(summary.c_str());
 +}
 +extern "C" JNIEXPORT jstring JNICALL
 +Java_org_mkvdcu_android_DriverNative_identity(JNIEnv* env, jclass) {
@@ -9382,10 +9554,10 @@ index 0000000..d6a3b60
 +}  // namespace rex::ui::vulkan
 diff --git a/src/ui/vulkan/android_driver_smoke.cpp b/src/ui/vulkan/android_driver_smoke.cpp
 new file mode 100644
-index 0000000..9e907cf
+index 0000000..ceb3806
 --- /dev/null
 +++ b/src/ui/vulkan/android_driver_smoke.cpp
-@@ -0,0 +1,511 @@
+@@ -0,0 +1,516 @@
 +#include "android_driver_smoke.h"
 +#include "android_native_sync.h"
 +#include <rex/cvar.h>
@@ -9889,9 +10061,14 @@ index 0000000..9e907cf
 +  VkPresentInfoKHR present{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
 +  present.waitSemaphoreCount = 1; present.pWaitSemaphores = &rendered;
 +  present.swapchainCount = 1; present.pSwapchains = &swapchain; present.pImageIndices = &index;
-+  { auto result = PanvkNativeSyncQueuePresent(*device,family,0,present);
++  // Exercise the optional same-family present queue as part of compatibility
++  // verification. The composition semaphore carries the dependency from queue 0.
++  const uint32_t present_queue = AndroidPresentationQueueIndex(*device, family);
++  record_uint("graphicsQueuesCreated", uint32_t(device->queue_families()[family].queues.size()));
++  record_uint("presentationQueueIndex", present_queue);
++  { auto result = PanvkNativeSyncQueuePresent(*device,family,present_queue,present);
 +    if (result != VK_SUBOPTIMAL_KHR) Check(result,"Present");
-+    auto queue = device->AcquireQueue(family,0);
++    auto queue = device->AcquireQueue(family,present_queue);
 +    Check(f.vkQueueWaitIdle(queue.queue()),"Conclusão da apresentação"); }
 +  record_test("androidSurfacePresentation", true);
 +  return "Primeiro submit compute, draw, tessellation, blend, readbacks e Surface Android: OK. " + AndroidDriverIdentity();
@@ -9913,10 +10090,10 @@ index 0000000..13e2a51
 +}
 diff --git a/src/ui/vulkan/android_native_sync.cpp b/src/ui/vulkan/android_native_sync.cpp
 new file mode 100644
-index 0000000..8e9a217
+index 0000000..3f6e283
 --- /dev/null
 +++ b/src/ui/vulkan/android_native_sync.cpp
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,210 @@
 +// Android native-buffer synchronization adapter for ICDs without SYNC_FD.
 +// HAL ABI fields follow AOSP hardware.h (Apache-2.0, Android Open Source Project)
 +// and frameworks/native/vulkan/include/hardware/hwvulkan.h. No vendor layout
@@ -10110,7 +10287,11 @@ index 0000000..8e9a217
 +    prepared.waitSemaphoreCount = 0;
 +    prepared.pWaitSemaphores = nullptr;
 +  }
-+  const auto acquisition = device.AcquireQueue(family, index);
++  const auto acquisition = [&] {
++    rex::diagnostics::PerformanceScope acquire(rex::diagnostics::PerformanceStage::PresentQueueAcquireCpu);
++    return device.AcquireQueue(family, index);
++  }();
++  rex::diagnostics::PerformanceScope call(rex::diagnostics::PerformanceStage::PresentCallCpu);
 +  const VkQueue previous = completed_present_queue;
 +  if (prepare) completed_present_queue = acquisition.queue();
 +  const VkResult result = device.functions().vkQueuePresentKHR(acquisition.queue(), &prepared);
@@ -10125,10 +10306,10 @@ index 0000000..8e9a217
 +}
 diff --git a/src/ui/vulkan/android_native_sync.h b/src/ui/vulkan/android_native_sync.h
 new file mode 100644
-index 0000000..7b283c4
+index 0000000..ce00269
 --- /dev/null
 +++ b/src/ui/vulkan/android_native_sync.h
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,17 @@
 +#pragma once
 +#include <rex/ui/vulkan/api.h>
 +namespace rex::ui::vulkan {
@@ -10136,6 +10317,8 @@ index 0000000..7b283c4
 +void* PanvkNativeSyncHal(void* original_module);
 +void PanvkNativeSyncConfigure(bool enabled);
 +bool PanvkNativeSyncEnabled();
++bool AndroidSeparatePresentQueueRequested();
++uint32_t AndroidPresentationQueueIndex(const VulkanDevice& device, uint32_t family);
 +// CPU fallback: consume presentation waits and complete them outside the queue
 +// lock, then enter vkQueuePresentKHR with no pending GPU waits. All callers of
 +// this function must NOT hold a Queue::Acquisition themselves.
@@ -10145,10 +10328,10 @@ index 0000000..7b283c4
 +void PanvkNativeSyncUnregister(const VulkanDevice* device);
 +}
 diff --git a/src/ui/vulkan/vulkan_device.cpp b/src/ui/vulkan/vulkan_device.cpp
-index 8197bb4..87a72ab 100644
+index 8197bb4..947f639 100644
 --- a/src/ui/vulkan/vulkan_device.cpp
 +++ b/src/ui/vulkan/vulkan_device.cpp
-@@ -18,6 +18,10 @@
+@@ -18,10 +18,19 @@
  #include <rex/assert.h>
  #include <rex/cvar.h>
  #include <rex/logging.h>
@@ -10159,7 +10342,16 @@ index 8197bb4..87a72ab 100644
  #include <rex/platform.h>
  #include <rex/string.h>
  #include <rex/ui/vulkan/device.h>
-@@ -32,13 +36,17 @@ REXCVAR_DEFINE_BOOL(vulkan_require_vertex_pipeline_stores_and_atomics, true, "UI
+ 
++#if REX_PLATFORM_ANDROID
++REXCVAR_DEFINE_BOOL(vulkan_reserve_present_queue_for_benchmark, false, "UI/Vulkan",
++                    "Reserve queue 1 for diagnostic live A/B comparisons");
++#endif
++
+ REXCVAR_DEFINE_BOOL(vulkan_require_fragment_stores_and_atomics, true, "UI/Vulkan",
+                     "Deprecated and ignored for parity; fragmentStoresAndAtomics is always "
+                     "required for Vulkan GPU emulation")
+@@ -32,13 +41,17 @@ REXCVAR_DEFINE_BOOL(vulkan_require_vertex_pipeline_stores_and_atomics, true, "UI
      .lifecycle(rex::cvar::Lifecycle::kInitOnly);
  // Apple Silicon / MoltenVK does not expose geometryShader or fillModeNonSolid;
  // default both to false on macOS so the device can still be selected.
@@ -10181,7 +10373,7 @@ index 8197bb4..87a72ab 100644
      .lifecycle(rex::cvar::Lifecycle::kInitOnly);
  
  namespace rex {
-@@ -64,6 +72,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+@@ -64,6 +77,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
      const bool with_gpu_emulation, const bool with_swapchain) {
    assert_not_null(vulkan_instance);
    assert_not_null(physical_device);
@@ -10191,7 +10383,7 @@ index 8197bb4..87a72ab 100644
  
    const VulkanInstance::Functions& ifn = vulkan_instance->functions();
  
-@@ -93,6 +104,14 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+@@ -93,6 +109,14 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
    ifn.vkGetPhysicalDeviceFeatures(physical_device, &supported_features);
  
    if (with_gpu_emulation) {
@@ -10206,7 +10398,7 @@ index 8197bb4..87a72ab 100644
      if (!supported_features.independentBlend) {
        // Not trivial to work around:
        // - Affects not only the blend equation, but also the color write mask.
-@@ -118,10 +137,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+@@ -118,10 +142,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
      }
      if (!supported_features.vertexPipelineStoresAndAtomics) {
        REXLOG_WARN(
@@ -10221,7 +10413,36 @@ index 8197bb4..87a72ab 100644
      }
      if (REXCVAR_GET(vulkan_require_geometry_shader) && !supported_features.geometryShader) {
        REXLOG_WARN(
-@@ -813,6 +833,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+@@ -397,6 +422,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+        ++queue_family_index) {
+     QueueFamily& queue_family = device->queue_families_[queue_family_index];
+     const VkQueueFamilyProperties& queue_family_properties = queue_families[queue_family_index];
++#if REX_PLATFORM_ANDROID
++    REXLOG_INFO("[QUEUE_CAPS] family={} flags=0x{:X} queues={} timestamp_bits={}",
++        queue_family_index, queue_family_properties.queueFlags, queue_family_properties.queueCount,
++        queue_family_properties.timestampValidBits);
++#endif
+ 
+     const VkQueueFlags queue_unsupported_flags = ~queue_family_properties.queueFlags;
+ 
+@@ -480,6 +510,16 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+ 
+   device->queue_families_[device->queue_family_graphics_compute_].queues.resize(std::max(
+       size_t(1), device->queue_families_[device->queue_family_graphics_compute_].queues.size()));
++#if REX_PLATFORM_ANDROID
++  // Reserve a second queue only within the same graphics family. Presentation
++  // may select it without queue-family ownership transfers. Single-queue ICDs
++  // retain queue 0; capability support is never fabricated.
++  if (with_swapchain && (AndroidSeparatePresentQueueRequested() ||
++      REXCVAR_GET(vulkan_reserve_present_queue_for_benchmark)) &&
++      queue_families[device->queue_family_graphics_compute_].queueCount >= 2) {
++    device->queue_families_[device->queue_family_graphics_compute_].queues.resize(2);
++  }
++#endif
+   if (device->queue_family_sparse_binding_ != UINT32_MAX) {
+     device->queue_families_[device->queue_family_sparse_binding_].queues.resize(std::max(
+         size_t(1), device->queue_families_[device->queue_family_sparse_binding_].queues.size()));
+@@ -813,6 +853,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
    }
  
    // Get the queues.
@@ -10231,7 +10452,7 @@ index 8197bb4..87a72ab 100644
  
    for (size_t queue_family_index = 0; queue_family_index < device->queue_families_.size();
         ++queue_family_index) {
-@@ -848,10 +871,17 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
+@@ -848,10 +891,17 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
      }
    }
  
@@ -10370,14 +10591,15 @@ index 914b311..65f995e 100644
  
    loader_.Close();
 diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
-index 23645ef..2191b2b 100644
+index 23645ef..79fb786 100644
 --- a/src/ui/vulkan/vulkan_presenter.cpp
 +++ b/src/ui/vulkan/vulkan_presenter.cpp
-@@ -9,8 +9,11 @@
+@@ -9,8 +9,12 @@
   * @modified    Tom Clay, 2026 - Adapted for ReXGlue runtime
   */
  
 +#include <rex/diagnostics/health.h>
++#include <rex/diagnostics/performance.h>
 +
  #include <algorithm>
  #include <atomic>
@@ -10385,15 +10607,16 @@ index 23645ef..2191b2b 100644
  #include <cstddef>
  #include <cstdint>
  #include <cmath>
-@@ -34,6 +37,7 @@
+@@ -34,6 +38,8 @@
  #endif
  
  #if REX_PLATFORM_ANDROID
 +#include "android_native_sync.h"
++#include <jni.h>
  #include <rex/ui/surface_android.h>
  #endif
  #if REX_PLATFORM_GNU_LINUX
-@@ -49,13 +53,13 @@
+@@ -49,19 +55,46 @@
  REXCVAR_DEFINE_BOOL(present_render_pass_clear, true, "UI/Presenter",
                      "Clear render pass during presentation");
  
@@ -10409,8 +10632,41 @@ index 23645ef..2191b2b 100644
 +REXCVAR_DEFINE_BOOL(vulkan_allow_present_mode_fifo_relaxed, !REX_PLATFORM_ANDROID, "UI/Vulkan",
                      "Allow FIFO relaxed present mode");
  
++REXCVAR_DEFINE_BOOL(vulkan_separate_present_queue, false, "UI/Vulkan",
++                    "Use queue 1 for presentation when the graphics family exposes it (experimental)");
++REXCVAR_DEFINE_BOOL(vulkan_present_pre_wait, false, "UI/Vulkan",
++                    "Wait for composition fence outside the queue lock before presenting (experimental)");
++#if REX_PLATFORM_ANDROID
++namespace { std::atomic<int> present_pre_wait_override{-1}, present_queue_override{-1}; }
++extern "C" JNIEXPORT void JNICALL
++Java_org_mkvdcu_android_DriverNative_setPresentPreWaitBenchmark(JNIEnv*, jclass, jboolean enabled) {
++  present_pre_wait_override.store(enabled ? 1 : 0, std::memory_order_release);
++}
++extern "C" JNIEXPORT void JNICALL
++Java_org_mkvdcu_android_DriverNative_setPresentQueueBenchmark(JNIEnv*, jclass, jboolean enabled) {
++  present_queue_override.store(enabled ? 1 : 0, std::memory_order_release);
++}
++#endif
++
  namespace rex {
-@@ -129,9 +133,6 @@ VulkanPresenter::PaintContext::Submission::~Submission() {
+ namespace ui {
+ namespace vulkan {
+ 
++#if REX_PLATFORM_ANDROID
++bool AndroidSeparatePresentQueueRequested() {
++  const int override = present_queue_override.load(std::memory_order_acquire);
++  return override < 0 ? REXCVAR_GET(vulkan_separate_present_queue) : override != 0;
++}
++uint32_t AndroidPresentationQueueIndex(const VulkanDevice& device, uint32_t family) {
++  return AndroidSeparatePresentQueueRequested() && family == device.queue_family_graphics_compute() &&
++      device.queue_families()[family].queues.size() > 1 ? 1 : 0;
++}
++#endif
++
+ #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
+ namespace {
+ 
+@@ -129,9 +162,6 @@ VulkanPresenter::PaintContext::Submission::~Submission() {
      dfn.vkDestroyCommandPool(device, draw_command_pool_, nullptr);
    }
  
@@ -10420,7 +10676,7 @@ index 23645ef..2191b2b 100644
    if (acquire_semaphore_ != VK_NULL_HANDLE) {
      dfn.vkDestroySemaphore(device, acquire_semaphore_, nullptr);
    }
-@@ -152,14 +153,6 @@ bool VulkanPresenter::PaintContext::Submission::Initialize() {
+@@ -152,14 +182,6 @@ bool VulkanPresenter::PaintContext::Submission::Initialize() {
          "semaphore");
      return false;
    }
@@ -10435,7 +10691,7 @@ index 23645ef..2191b2b 100644
    VkCommandPoolCreateInfo command_pool_create_info;
    command_pool_create_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
    command_pool_create_info.pNext = nullptr;
-@@ -478,9 +471,10 @@ bool VulkanPresenter::CaptureGuestOutput(RawImage& image_out) {
+@@ -478,9 +500,10 @@ bool VulkanPresenter::CaptureGuestOutput(RawImage& image_out) {
    VkDeviceSize buffer_size = VkDeviceSize(sizeof(uint32_t) * pixel_count);
    VkBuffer buffer;
    VkDeviceMemory buffer_memory;
@@ -10447,7 +10703,7 @@ index 23645ef..2191b2b 100644
      REXLOG_ERROR("VulkanPresenter: Failed to create the guest output capture buffer");
      return false;
    }
-@@ -646,6 +640,27 @@ bool VulkanPresenter::CaptureGuestOutput(RawImage& image_out) {
+@@ -646,6 +669,27 @@ bool VulkanPresenter::CaptureGuestOutput(RawImage& image_out) {
      return false;
    }
  
@@ -10475,7 +10731,7 @@ index 23645ef..2191b2b 100644
    image_out.width = image_extent.width;
    image_out.height = image_extent.height;
    image_out.stride = sizeof(uint32_t) * image_extent.width;
-@@ -655,7 +670,7 @@ bool VulkanPresenter::CaptureGuestOutput(RawImage& image_out) {
+@@ -655,7 +699,7 @@ bool VulkanPresenter::CaptureGuestOutput(RawImage& image_out) {
      image_out_pixels[i] = Packed10bpcRGBTo8bpcBytes(reinterpret_cast<const uint32_t*>(mapping)[i]);
    }
  
@@ -10484,7 +10740,7 @@ index 23645ef..2191b2b 100644
    dfn.vkFreeMemory(device, buffer_memory, nullptr);
  
    return true;
-@@ -747,6 +762,11 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -747,6 +791,11 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
                                                                   uint32_t new_surface_height,
                                                                   bool was_paintable,
                                                                   bool& is_vsync_implicit_out) {
@@ -10496,7 +10752,7 @@ index 23645ef..2191b2b 100644
    const VulkanInstance* const vulkan_instance = vulkan_device_->vulkan_instance();
    const VulkanInstance::Functions& ifn = vulkan_instance->functions();
    const VkInstance instance = vulkan_instance->instance();
-@@ -988,6 +1008,22 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -988,6 +1037,22 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
      return SurfacePaintConnectResult::kFailure;
    }
  
@@ -10519,7 +10775,7 @@ index 23645ef..2191b2b 100644
    // Create the image views and the framebuffers.
    assert_true(paint_context_.swapchain_framebuffers.empty());
    paint_context_.swapchain_framebuffers.reserve(paint_context_.swapchain_images.size());
-@@ -1037,6 +1073,10 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
+@@ -1037,6 +1102,10 @@ VulkanPresenter::ConnectOrReconnectPaintingToSurfaceFromUIThread(Surface& new_su
    }
  
    is_vsync_implicit_out = paint_context_.swapchain_is_fifo;
@@ -10530,7 +10786,7 @@ index 23645ef..2191b2b 100644
    return SurfacePaintConnectResult::kSuccess;
  }
  
-@@ -1352,6 +1392,32 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+@@ -1352,6 +1421,32 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
      swapchain_create_info.queueFamilyIndexCount = 0;
      swapchain_create_info.pQueueFamilyIndices = nullptr;
    }
@@ -10563,7 +10819,7 @@ index 23645ef..2191b2b 100644
    swapchain_create_info.preTransform =
        (surface_capabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)
            ? VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR
-@@ -1366,7 +1432,7 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+@@ -1366,7 +1461,7 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
    } else {
      uint32_t composite_alpha_shift;
      if (!rex::bit_scan_forward(uint32_t(surface_capabilities.supportedCompositeAlpha),
@@ -10572,7 +10828,7 @@ index 23645ef..2191b2b 100644
        // Against the Vulkan specification, but breaks the logic here.
        REXLOG_ERROR(
            "VulkanPresenter: The surface doesn't support any composite alpha "
-@@ -1376,6 +1442,7 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
+@@ -1376,6 +1471,7 @@ VkSwapchainKHR VulkanPresenter::PaintContext::CreateSwapchainForVulkanSurface(
      swapchain_create_info.compositeAlpha =
          VkCompositeAlphaFlagBitsKHR(uint32_t(1) << composite_alpha_shift);
    }
@@ -10580,19 +10836,20 @@ index 23645ef..2191b2b 100644
    // As presentation is usually controlled by the GPU command processor, it's
    // better to use modes that allow as quick acquisition as possible to avoid
    // interfering with GPU command processing, and also to allow tearing so
-@@ -1431,6 +1498,23 @@ VkSwapchainKHR VulkanPresenter::PaintContext::PrepareForSwapchainRetirement() {
+@@ -1431,6 +1527,24 @@ VkSwapchainKHR VulkanPresenter::PaintContext::PrepareForSwapchainRetirement() {
    }
    const VulkanDevice::Functions& dfn = vulkan_device->functions();
    const VkDevice device = vulkan_device->device();
 +  // Submission fences do not prove that the presentation engine has consumed
 +  // render-finished semaphores. Drain the present queue before retiring them.
 +  if (!swapchain_present_semaphores.empty() && present_queue_family != UINT32_MAX) {
-+    const VulkanDevice::Queue::Acquisition queue_acquisition =
-+        vulkan_device->AcquireQueue(present_queue_family, 0);
-+    const VkResult wait_result = dfn.vkQueueWaitIdle(queue_acquisition.queue());
-+    if (wait_result != VK_SUCCESS) {
-+      REXLOG_ERROR("VulkanPresenter: Failed to wait for present queue before swapchain retirement: {}",
-+                   int32_t(wait_result));
++    // A diagnostic session can switch present queues while running. Retire
++    // every created queue in that family before recycling present semaphores.
++    for (uint32_t index = 0; index < vulkan_device->queue_families()[present_queue_family].queues.size(); ++index) {
++      const auto acquisition = vulkan_device->AcquireQueue(present_queue_family, index);
++      const VkResult wait_result = dfn.vkQueueWaitIdle(acquisition.queue());
++      if (wait_result != VK_SUCCESS)
++        REXLOG_ERROR("VulkanPresenter: Failed to retire present queue {}: {}", index, int32_t(wait_result));
 +    }
 +  }
 +  for (VkSemaphore semaphore : swapchain_present_semaphores) {
@@ -10604,7 +10861,7 @@ index 23645ef..2191b2b 100644
    for (const SwapchainFramebuffer& framebuffer : swapchain_framebuffers) {
      dfn.vkDestroyFramebuffer(device, framebuffer.framebuffer, nullptr);
      dfn.vkDestroyImageView(device, framebuffer.image_view, nullptr);
-@@ -1475,6 +1559,51 @@ VulkanPresenter::GuestOutputImage::~GuestOutputImage() {
+@@ -1475,6 +1589,51 @@ VulkanPresenter::GuestOutputImage::~GuestOutputImage() {
  }
  
  bool VulkanPresenter::GuestOutputImage::Initialize() {
@@ -10656,7 +10913,7 @@ index 23645ef..2191b2b 100644
    VkImageCreateInfo image_create_info;
    image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
    image_create_info.pNext = nullptr;
-@@ -1488,8 +1617,7 @@ bool VulkanPresenter::GuestOutputImage::Initialize() {
+@@ -1488,8 +1647,7 @@ bool VulkanPresenter::GuestOutputImage::Initialize() {
    image_create_info.arrayLayers = 1;
    image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
    image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
@@ -10666,7 +10923,7 @@ index 23645ef..2191b2b 100644
    image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
    image_create_info.queueFamilyIndexCount = 0;
    image_create_info.pQueueFamilyIndices = nullptr;
-@@ -1529,14 +1657,26 @@ bool VulkanPresenter::GuestOutputImage::Initialize() {
+@@ -1529,14 +1687,26 @@ bool VulkanPresenter::GuestOutputImage::Initialize() {
  }
  
  Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_drawers) {
@@ -10693,7 +10950,7 @@ index 23645ef..2191b2b 100644
    }
    const PaintContext::Submission& paint_submission =
        *paint_context_.submissions[current_paint_submission_index % paint_submission_count];
-@@ -1569,9 +1709,21 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -1569,9 +1739,21 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
  
    VkSemaphore acquire_semaphore = paint_submission.acquire_semaphore();
    uint32_t swapchain_image_index;
@@ -10717,7 +10974,7 @@ index 23645ef..2191b2b 100644
    switch (acquire_result) {
      case VK_SUCCESS:
      case VK_SUBOPTIMAL_KHR:
-@@ -1587,9 +1739,14 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -1587,9 +1769,14 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
        // Not an error, reporting just as info (may normally occur while resizing
        // on some platforms).
        REXLOG_INFO(
@@ -10734,7 +10991,7 @@ index 23645ef..2191b2b 100644
      default:
        REXLOG_ERROR("VulkanPresenter: Failed to acquire the swapchain image");
        return PaintResult::kNotPresented;
-@@ -1643,8 +1800,66 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -1643,8 +1830,66 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
      // the consumer critical section now as everything here either will be using
      // the new reference or is exclusively owned by main target painting (and
      // multiple threads can't paint the main target at the same time).
@@ -10801,7 +11058,7 @@ index 23645ef..2191b2b 100644
    if (guest_output_image) {
      VkExtent2D max_framebuffer_extent =
          util::GetMax2DFramebufferExtent(vulkan_device_->properties());
-@@ -1652,6 +1867,10 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -1652,6 +1897,10 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
          guest_output_properties, paint_context_.swapchain_extent.width,
          paint_context_.swapchain_extent.height, max_framebuffer_extent.width,
          max_framebuffer_extent.height, guest_output_paint_config);
@@ -10812,7 +11069,7 @@ index 23645ef..2191b2b 100644
      if (guest_output_flow.effect_count) {
        // Store the main target reference to the guest output image so it's not
        // destroyed while it's still potentially in use by main target painting
-@@ -2126,6 +2345,10 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -2126,6 +2375,10 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
    // If hasn't presented the guest output, begin the pass to clear and, if
    // needed, to draw the UI.
    if (!swapchain_image_pass_begun) {
@@ -10823,7 +11080,7 @@ index 23645ef..2191b2b 100644
      dfn.vkCmdBeginRenderPass(draw_command_buffer, &swapchain_render_pass_begin_info,
                               VK_SUBPASS_CONTENTS_INLINE);
    }
-@@ -2148,6 +2371,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -2148,6 +2401,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
          draw_command_buffer, ui_submission_tracker_.GetCurrentSubmission(),
          ui_submission_tracker_.UpdateAndGetCompletedSubmission(),
          paint_context_.swapchain_render_pass, paint_context_.swapchain_render_pass_format);
@@ -10831,7 +11088,7 @@ index 23645ef..2191b2b 100644
      ExecuteUIDrawersFromUIThread(ui_draw_context);
    }
  
-@@ -2174,7 +2398,8 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -2174,7 +2428,8 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
      paint_context_.ui_setup_command_buffer_current_index = SIZE_MAX;
    }
    command_buffers[command_buffer_count++] = draw_command_buffer;
@@ -10841,7 +11098,19 @@ index 23645ef..2191b2b 100644
    VkSubmitInfo submit_info;
    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
    submit_info.pNext = nullptr;
-@@ -2196,10 +2421,19 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -2185,9 +2440,11 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+   submit_info.pCommandBuffers = command_buffers;
+   submit_info.signalSemaphoreCount = 1;
+   submit_info.pSignalSemaphores = &present_semaphore;
++  VkFence composition_fence = VK_NULL_HANDLE;
+   {
+     VulkanSubmissionTracker::FenceAcquisition fence_acqusition(
+         paint_context_.submission_tracker.AcquireFenceToAdvanceSubmission());
++    composition_fence = fence_acqusition.fence();
+     // Also update the submission tracker giving submission indices to UI draw
+     // callbacks if submission is successful.
+     VulkanSubmissionTracker::FenceAcquisition ui_fence_acquisition;
+@@ -2196,10 +2453,19 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
      }
      VkResult submit_result;
      {
@@ -10865,7 +11134,30 @@ index 23645ef..2191b2b 100644
        if (ui_fence_acquisition.fence() != VK_NULL_HANDLE && submit_result == VK_SUCCESS) {
          if (dfn.vkQueueSubmit(queue_acquisition.queue(), 0, nullptr,
                                ui_fence_acquisition.fence()) != VK_SUCCESS) {
-@@ -2237,11 +2471,32 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -2227,6 +2493,22 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+     }
+   }
+ 
++#if REX_PLATFORM_ANDROID
++  const int pre_wait_override = present_pre_wait_override.load(std::memory_order_acquire);
++  const bool pre_wait = pre_wait_override < 0 ? REXCVAR_GET(vulkan_present_pre_wait) : pre_wait_override != 0;
++  if (pre_wait && !PanvkNativeSyncEnabled()) {
++    // The tracker owns this fence until a later paint, on this same UI thread.
++    // The queue acquisition above has ended. Keep render submissions unblocked
++    // while the composition reaches completion. Present still consumes its
++    // original binary semaphore exactly once and holds external queue sync.
++    rex::diagnostics::PerformanceScope wait(rex::diagnostics::PerformanceStage::PresentReadyWaitCpu);
++    const VkResult ready = dfn.vkWaitForFences(device, 1, &composition_fence, VK_TRUE, 5000000000ULL);
++    if (ready != VK_SUCCESS) {
++      REXLOG_ERROR("VulkanPresenter: composition pre-wait failed {}", int32_t(ready));
++      return PaintResult::kNotPresentedConnectionOutdated;
++    }
++  }
++#endif
+   VkPresentInfoKHR present_info;
+   present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+   present_info.pNext = nullptr;
+@@ -2237,11 +2519,43 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
    present_info.pImageIndices = &swapchain_image_index;
    present_info.pResults = nullptr;
    VkResult present_result;
@@ -10878,7 +11170,18 @@ index 23645ef..2191b2b 100644
 +    // the queue lock. The helper retains external synchronization for the full
 +    // vkQueuePresentKHR call, including the synchronous Android HAL callback.
 +    present_result = PanvkNativeSyncQueuePresent(
-+        *vulkan_device_, paint_context_.present_queue_family, 0, present_info);
++        *vulkan_device_, paint_context_.present_queue_family,
++        [&] {
++          const uint32_t family = paint_context_.present_queue_family;
++          const uint32_t index = AndroidPresentationQueueIndex(*vulkan_device_, family);
++          static uint32_t previous_index = UINT32_MAX;
++          if (index != previous_index) {
++            REXLOG_INFO("[PRESENT_QUEUE] family={} selected={} created={}", family, index,
++                vulkan_device_->queue_families()[family].queues.size());
++            previous_index = index;
++          }
++          return index;
++        }(), present_info);
 +  }
 +#else
 +  {
@@ -10900,7 +11203,7 @@ index 23645ef..2191b2b 100644
    switch (present_result) {
      case VK_SUCCESS:
        return PaintResult::kPresented;
-@@ -2258,8 +2513,8 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+@@ -2258,8 +2572,8 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
        // Not an error, reporting just as info (may normally occur while resizing
        // on some platforms).
        REXLOG_INFO(

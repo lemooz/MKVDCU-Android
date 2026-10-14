@@ -23,6 +23,29 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 include(generated/rexglue.cmake)
 
 # Sources
+# MKVDCU's HD device initialization hardcodes 1280x720 at 825F55BC.
+# Build a derived translation unit; codegen output stays intact and regeneration
+# is detected by CMake. Only these two immediates are replaced, before globals,
+# presentation parameters and render-target allocations consume the dimensions.
+if(ANDROID)
+    set(_resolution_source "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/mkvsdcu_recomp.65.cpp")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_resolution_source}")
+    file(READ "${_resolution_source}" _resolution_code)
+    set(_resolution_original "loc_825F55BC:\n\t// li r30,1280\n\tctx.r30.s64 = 1280;\n\t// li r26,720\n\tctx.r26.s64 = 720;")
+    string(REPLACE "\r\n" "\n" _resolution_code "${_resolution_code}")
+    string(FIND "${_resolution_code}" "${_resolution_original}" _resolution_offset)
+    if(_resolution_offset EQUAL -1)
+        message(FATAL_ERROR "MKVDCU HD resolution anchor changed; inspect codegen before building")
+    endif()
+    string(REPLACE "${_resolution_original}"
+        "loc_825F55BC:\n\tctx.r30.s64 = mkvdcu_internal_width();\n\tctx.r26.s64 = mkvdcu_internal_height();"
+        _resolution_code "${_resolution_code}")
+    set(_resolution_code "extern \"C\" unsigned int mkvdcu_internal_width();\nextern \"C\" unsigned int mkvdcu_internal_height();\n${_resolution_code}")
+    set(_resolution_derived "${CMAKE_CURRENT_BINARY_DIR}/mkvsdcu_recomp_resolution.cpp")
+    file(CONFIGURE OUTPUT "${_resolution_derived}" CONTENT "${_resolution_code}" @ONLY)
+    set_source_files_properties("${_resolution_derived}" PROPERTIES COMPILE_OPTIONS "${REXGLUE_RECOMP_OPTIONS}")
+endif()
+
 set(MKVSDCU_SOURCES
     src/main.cpp
     src/mkvsdcu_app.cpp
@@ -51,8 +74,14 @@ else()
 endif()
 
 # This is target-private host plumbing. The plugin remains selectable at
-# launch via --gpu_plugin xenos; no UE3 or game code is altered here.
+# launch via --gpu_plugin xenos. The Android translation unit above adjusts
+# the game's HD device initialization dimensions before surface creation.
 rexglue_setup_target(${MKVSDCU_TARGET} GPU_PLUGINS xenos)
+if(ANDROID)
+    get_target_property(_recomp_sources ${MKVSDCU_TARGET}_recomp SOURCES)
+    list(TRANSFORM _recomp_sources REPLACE "(^|.*/)mkvsdcu_recomp\\.65\\.cpp$" "${_resolution_derived}")
+    set_property(TARGET ${MKVSDCU_TARGET}_recomp PROPERTY SOURCES "${_recomp_sources}")
+endif()
 
 if(ANDROID)
     # rexruntime already owns rexui and ImGui. Relinking their OBJECT targets

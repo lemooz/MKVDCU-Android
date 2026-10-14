@@ -11,6 +11,7 @@ import android.view.WindowManager;
 import android.view.ViewGroup;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
+import android.widget.Button;
 import android.content.Intent;
 import android.app.AlertDialog;
 import android.widget.Toast;
@@ -36,14 +37,14 @@ public class GameActivity extends SDLActivity {
     private VirtualGamepadView virtualGamepadView;
     private android.view.View inGameMenuView;
     private final Handler healthHandler = new Handler(Looper.getMainLooper());
-    private TextView healthView;
-    private long healthTick;
+    private PerformanceOverlayView performanceOverlay;
     private boolean diagnostics;
     private java.io.BufferedWriter performanceLog;
     private java.io.BufferedWriter frameLog;
     private long frameCursor;
     private boolean startupReported;
     private int renderAreaBenchmark = -1;
+    private int presentQueueBenchmark = -1, presentPreWaitBenchmark = -1;
     private android.content.BroadcastReceiver benchmarkReceiver;
     private final Runnable performanceUpdate = new Runnable() {
         @Override public void run() {
@@ -60,7 +61,7 @@ public class GameActivity extends SDLActivity {
                             ? power.getCurrentThermalStatus() : -1;
                     String actualDriver = DriverNative.identity().replace("\"", "\"\"").replace('\n', ' ');
                     performanceLog.write(android.os.SystemClock.elapsedRealtime() + "," +
-                        snapshot + ",\"" + actualDriver + "\"," + thermal + "," + renderAreaBenchmark + "\n");
+                        snapshot + ",\"" + actualDriver + "\"," + thermal + "," + renderAreaBenchmark + "," + presentQueueBenchmark + "," + presentPreWaitBenchmark + "\n");
                     performanceLog.flush();
                 }
                 if (frameLog != null) {
@@ -72,25 +73,6 @@ public class GameActivity extends SDLActivity {
                 }
             } catch (java.io.IOException error) { Log.e(TAG, "Performance CSV", error); }
             healthHandler.postDelayed(this, 1000);
-        }
-    };
-    private final Runnable healthUpdate = new Runnable() {
-        @Override public void run() {
-            String snapshot = nativeReadHealthSnapshot();
-            StringBuilder text = new StringBuilder("LIVE ").append(++healthTick)
-                    .append("  count/age(ms)\n");
-            int shown = 0;
-            for (String field : snapshot.split(" ")) {
-                if (field.startsWith("swap_out=") || field.startsWith("gpu_swap=") ||
-                        field.startsWith("paint_out=") || field.startsWith("present=") ||
-                        field.startsWith("input=") || field.startsWith("start_down=") ||
-                        field.startsWith("audio_out=") || field.startsWith("audio_play=")) {
-                    text.append(field).append("  ");
-                    if (++shown % 4 == 0) text.append('\n');
-                }
-            }
-            if (healthView != null) healthView.setText(text);
-            healthHandler.postDelayed(this, 250);
         }
     };
 
@@ -121,6 +103,10 @@ public class GameActivity extends SDLActivity {
         if (BuildConfig.DEBUG) {
             benchmarkReceiver = new android.content.BroadcastReceiver() {
                 @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+                    if ((getPackageName() + ".DEBUG_RENDER_EXTENTS").equals(intent.getAction())) {
+                        DriverNative.armRenderExtentProbe();
+                        return;
+                    }
                     if ((getPackageName() + ".DEBUG_CPU_PROFILE").equals(intent.getAction())) {
                         nativeStartCpuProfile();
                         return;
@@ -136,6 +122,20 @@ public class GameActivity extends SDLActivity {
                         } catch (java.io.IOException error) { Log.e(TAG, "Capture CSV", error); }
                         return;
                     }
+                    if ((getPackageName() + ".DEBUG_PRESENT_QUEUE").equals(intent.getAction())) {
+                        boolean enabled = intent.getBooleanExtra("enabled", false);
+                        DriverNative.setPresentQueueBenchmark(enabled);
+                        presentQueueBenchmark = enabled ? 1 : 0;
+                        return;
+                    }
+                    if ((getPackageName() + ".DEBUG_PRESENT_PREWAIT").equals(intent.getAction())) {
+                        boolean enabled = intent.getBooleanExtra("enabled", false);
+                        DriverNative.setPresentPreWaitBenchmark(enabled);
+                        presentPreWaitBenchmark = enabled ? 1 : 0;
+                        Log.i(TAG, "Present pre-wait benchmark=" + enabled);
+                        return;
+                    }
+                    if (!(getPackageName() + ".DEBUG_RENDER_AREA").equals(intent.getAction())) return;
                     boolean enabled = intent.getBooleanExtra("enabled", false);
                     DriverNative.setRenderAreaBenchmark(enabled);
                     renderAreaBenchmark = enabled ? 1 : 0;
@@ -144,6 +144,9 @@ public class GameActivity extends SDLActivity {
             android.content.IntentFilter filter = new android.content.IntentFilter(getPackageName() + ".DEBUG_RENDER_AREA");
             filter.addAction(getPackageName() + ".DEBUG_FRAME_CAPTURE");
             filter.addAction(getPackageName() + ".DEBUG_CPU_PROFILE");
+            filter.addAction(getPackageName() + ".DEBUG_RENDER_EXTENTS");
+            filter.addAction(getPackageName() + ".DEBUG_PRESENT_PREWAIT");
+            filter.addAction(getPackageName() + ".DEBUG_PRESENT_QUEUE");
             if (android.os.Build.VERSION.SDK_INT >= 33)
                 registerReceiver(benchmarkReceiver, filter, android.content.Context.RECEIVER_EXPORTED);
             else registerReceiver(benchmarkReceiver, filter);
@@ -163,7 +166,7 @@ public class GameActivity extends SDLActivity {
                     (getIntent().hasExtra("benchmark_spirv_optimize") ? getIntent().getBooleanExtra("benchmark_spirv_optimize", false) : "default") +
                     "; " + GraphicsSettings.summary(getIntent()) + "; sustained_active=" + sustained +
                     "; frame_probe_prepare=" + (diagnostics || BuildConfig.DEBUG) + "\n");
-            performanceLog.write("elapsed_ms,guest_frames,game_fps,avg_ms,median_ms,p95_ms,p99_ms,inclusive_stage_count_total_ms,actual_driver,thermal_status,render_area_benchmark\n");
+            performanceLog.write("elapsed_ms,guest_frames,game_fps,avg_ms,median_ms,p95_ms,p99_ms,inclusive_stage_count_total_ms,actual_driver,thermal_status,render_area_benchmark,present_queue_benchmark,present_prewait_benchmark\n");
             frameLog = new java.io.BufferedWriter(new java.io.FileWriter(new java.io.File(getFilesDir(), "last-frame-times.csv")));
             frameLog.write("frame_id,interval_ms\n");
         } catch (java.io.IOException error) { Log.e(TAG, "Performance CSV", error); }
@@ -182,23 +185,33 @@ public class GameActivity extends SDLActivity {
             root.addView(inGameMenuView, new RelativeLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             setupInGameMenu();
-            if (diagnostics) {
-            healthView = new TextView(this);
-            healthView.setTextColor(0xFFE0FFDD);
-            healthView.setBackgroundColor(0xAA102018);
-            healthView.setTextSize(9);
-            healthView.setTypeface(android.graphics.Typeface.MONOSPACE);
-            healthView.setPadding(8, 4, 8, 4);
-            RelativeLayout.LayoutParams healthParams = new RelativeLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            healthParams.leftMargin = 20;
-            healthParams.topMargin = 145;
-            root.addView(healthView, healthParams);
-            healthView.setOnLongClickListener(view -> {
-                DriverNative.armCapture();
-                android.widget.Toast.makeText(this, "Captura dos próximos 5 frames armada", android.widget.Toast.LENGTH_LONG).show();
-                return true;
+            performanceOverlay = new PerformanceOverlayView(this);
+            performanceOverlay.setSnapshotProvider(new PerformanceOverlayView.SnapshotProvider() {
+                @Override public String getPerformanceSnapshot() { return nativeReadPerformanceSnapshot(); }
+                @Override public String getHealthSnapshot() { return nativeReadHealthSnapshot(); }
+                @Override public String getDriverName() {
+                    return DriverNative.identity();
+                }
             });
+            performanceOverlay.setOnCloseCallback(() -> {
+                performanceOverlay.stop();
+                new Prefs(GameActivity.this).setPerformanceOverlayEnabled(false);
+                updateInGameMenuHudButton(false);
+                Toast.makeText(GameActivity.this, "Overlay MangoHUD desativado", Toast.LENGTH_SHORT).show();
+            });
+
+            RelativeLayout.LayoutParams overlayParams = new RelativeLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            overlayParams.leftMargin = 20;
+            overlayParams.topMargin = 20;
+            root.addView(performanceOverlay, overlayParams);
+
+            boolean overlayEnabled = getIntent().getBooleanExtra("perf_overlay_enabled",
+                    new Prefs(this).isPerformanceOverlayEnabled());
+            if (overlayEnabled) {
+                performanceOverlay.start();
+            } else {
+                performanceOverlay.stop();
             }
         } else {
             Log.e(TAG, "Could not attach virtual touchscreen gamepad: SDL content view missing");
@@ -221,15 +234,16 @@ public class GameActivity extends SDLActivity {
     protected void onResume() {
         super.onResume();
         if(virtualGamepadView!=null)virtualGamepadView.reloadLayout();
-        healthHandler.removeCallbacks(healthUpdate);
-        if (healthView != null) healthHandler.post(healthUpdate);
+        if (performanceOverlay != null && new Prefs(this).isPerformanceOverlayEnabled()) {
+            performanceOverlay.start();
+        }
         healthHandler.removeCallbacks(performanceUpdate);
         healthHandler.post(performanceUpdate);
     }
 
     @Override
     protected void onPause() {
-        healthHandler.removeCallbacks(healthUpdate);
+        if (performanceOverlay != null) performanceOverlay.stop();
         healthHandler.removeCallbacks(performanceUpdate);
         if(virtualGamepadView!=null)virtualGamepadView.releaseAll();
         nativeSetVirtualGamepadStateV2(0,0,0,0,0,0,0);
@@ -247,7 +261,7 @@ public class GameActivity extends SDLActivity {
             unregisterReceiver(benchmarkReceiver);
             benchmarkReceiver = null;
         }
-        healthHandler.removeCallbacks(healthUpdate);
+        if (performanceOverlay != null) performanceOverlay.stop();
         healthHandler.removeCallbacks(performanceUpdate);
         if (performanceLog != null) try { performanceLog.close(); } catch (java.io.IOException ignored) { }
         if (frameLog != null) try { frameLog.close(); } catch (java.io.IOException ignored) { }
@@ -276,32 +290,25 @@ public class GameActivity extends SDLActivity {
         inGameMenuView.findViewById(R.id.btn_menu_exit).setOnClickListener(v -> confirmExit());
     }
 
-    private void toggleHud() {
-        if (healthView != null) {
-            boolean isVisible = healthView.getVisibility() == View.VISIBLE;
-            healthView.setVisibility(isVisible ? View.GONE : View.VISIBLE);
-            if (!isVisible) healthHandler.post(healthUpdate);
-            else healthHandler.removeCallbacks(healthUpdate);
-            Toast.makeText(this, isVisible ? "HUD de desempenho ocultado" : "HUD de desempenho ativado", Toast.LENGTH_SHORT).show();
-        } else {
-            View content = SDLActivity.getContentView();
-            if (content instanceof ViewGroup) {
-                ViewGroup root = (ViewGroup) content;
-                healthView = new TextView(this);
-                healthView.setTextColor(0xFFE0FFDD);
-                healthView.setBackgroundColor(0xAA102018);
-                healthView.setTextSize(9);
-                healthView.setTypeface(android.graphics.Typeface.MONOSPACE);
-                healthView.setPadding(8, 4, 8, 4);
-                RelativeLayout.LayoutParams healthParams = new RelativeLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                healthParams.leftMargin = 20;
-                healthParams.topMargin = 145;
-                root.addView(healthView, healthParams);
-                healthHandler.post(healthUpdate);
-                Toast.makeText(this, "HUD de desempenho ativado", Toast.LENGTH_SHORT).show();
-            }
+    private void updateInGameMenuHudButton(boolean active) {
+        if (inGameMenuView == null) return;
+        Button btnHud = inGameMenuView.findViewById(R.id.btn_menu_hud);
+        if (btnHud != null) {
+            btnHud.setText(active ? "Ocultar Overlay (MangoHUD)" : "Exibir Overlay (MangoHUD)");
         }
+    }
+
+    private void toggleHud() {
+        if (performanceOverlay == null) return;
+        boolean nowActive = !performanceOverlay.isRunning();
+        if (nowActive) {
+            performanceOverlay.start();
+        } else {
+            performanceOverlay.stop();
+        }
+        new Prefs(this).setPerformanceOverlayEnabled(nowActive);
+        updateInGameMenuHudButton(nowActive);
+        Toast.makeText(this, nowActive ? "Overlay MangoHUD ativado" : "Overlay de desempenho desativado", Toast.LENGTH_SHORT).show();
     }
 
     private void confirmRestart() {
@@ -360,8 +367,9 @@ public class GameActivity extends SDLActivity {
             String driverId = getIntent().getStringExtra("driver_id");
             DriverStore.Driver driver = new DriverStore(this).get(driverId);
             info.setText("Driver Vulkan: " + (driver != null ? driver.name : "Sistema") +
-                    " • 1× Resolução Nativa • Xbox 360 ARM64");
+                    " • " + GraphicsSettings.scaleDescription(getIntent()) + " • Xbox 360 ARM64");
         }
+        updateInGameMenuHudButton(performanceOverlay != null && performanceOverlay.isRunning());
         inGameMenuView.setVisibility(View.VISIBLE);
         inGameMenuView.bringToFront();
     }
@@ -396,8 +404,10 @@ public class GameActivity extends SDLActivity {
 
     @Override
     public void loadLibraries() {
+        Log.i(TAG, DriverNative.configureCpuLimit(GraphicsSettings.cores(getIntent()), GraphicsSettings.economy(getIntent())));
         DriverStore.Driver driver = new DriverStore(this).get(getIntent().getStringExtra("driver_id"));
         driver.turnipMode = driver.kind.equals("turnip") ? GraphicsSettings.turnipMode(getIntent()) : 0;
+                driver.panvkLateStencil = driver.kind.equals("panvk") && GraphicsSettings.panvkLateStencil(getIntent());
         if (!driver.usable()) throw new UnsatisfiedLinkError("Driver incompatível: " + driver.reason());
         String error = DriverNative.configure(this, driver);
         if (!error.isEmpty()) throw new UnsatisfiedLinkError(error);
@@ -446,7 +456,15 @@ public class GameActivity extends SDLActivity {
                         } catch (Exception ignored) {
                         }
                     }
-                    sIsoPfd = getContentResolver().openFileDescriptor(parsedUri, "r");
+                    sIsoPfd = null;
+                    // ContentResolver wraps its fd in a stable provider reference.
+                    // A provider killed under memory pressure would then kill
+                    // this game process too (observed in ApplicationExitInfo).
+                    // Adopt its detached fd, release the provider wrapper immediately,
+                    // and retain the local fd until session teardown.
+                    try (ParcelFileDescriptor providerFd = getContentResolver().openFileDescriptor(parsedUri, "r")) {
+                        if (providerFd != null) sIsoPfd = ParcelFileDescriptor.adoptFd(providerFd.detachFd());
+                    }
                     if (sIsoPfd != null) {
                         int fd = sIsoPfd.getFd();
                         gamePath = "/proc/self/fd/" + fd;
@@ -464,6 +482,7 @@ public class GameActivity extends SDLActivity {
         }
 
         args.add("--fullscreen=true");
+        args.add("--vulkan_reserve_present_queue_for_benchmark=" + BuildConfig.DEBUG);
         // Keep the real translated Xenos pixel shader active while recording
         // the fetch constant and per-channel TextureSign for the EULA font draw.
         args.add("--android_debug_eula_probe_stage=0");
@@ -481,6 +500,7 @@ public class GameActivity extends SDLActivity {
         args.add("--vulkan_frame_probe_prepare=" + (diagnostics || BuildConfig.DEBUG));
         args.add("--android_gpu_diagnostics=" + diagnostics);
         args.add("--port_render_mode=native");
+        args.add("--port_perf_overlay=false");
 
         Log.i(TAG, "Launching MKVDCU with args: " + args);
         return args.toArray(new String[0]);

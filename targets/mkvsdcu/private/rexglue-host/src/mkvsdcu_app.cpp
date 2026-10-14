@@ -313,10 +313,9 @@ void MkvsdcuApp::OnPostSetup() {
     app_context().CallInUIThreadDeferred([this] { OpenPortMenu(); });
   }
 #ifdef __ANDROID__
-  // Keep the frame-rate/readback HUD visible during device validation so a
-  // black or stalled game state can be distinguished from a dead presenter.
-  rex::cvar::SetFlagByName("port_perf_overlay", "true");
-  REXLOG_INFO("[MKVDCU][HUD] enabling Android performance overlay");
+  // Android performance overlay is now unified into Java MangoHUD/RivaTuner overlay.
+  // Native ImGui overlay is kept disabled.
+  rex::cvar::SetFlagByName("port_perf_overlay", "false");
 #endif
   if (rex::cvar::Query<bool>("port_perf_overlay")) {
     app_context().CallInUIThreadDeferred([this] { ShowPerfOverlay(true); });
