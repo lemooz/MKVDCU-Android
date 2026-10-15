@@ -16,6 +16,7 @@ import android.os.Looper;
 final class VirtualGamepadView extends View {
     interface StateSink {void send(int buttons,int lx,int ly,int rx,int ry,int lt,int rt);}
     interface SelectionListener {void selected(GamepadLayout.Control control);}
+    interface InputCapture {void changed(int buttons,int lt,int rt);}
     private static final int NONE=-1,TOGGLE=-2,EDIT=-3,MENU=-4;
     private static final class Touch {
         final int control;float x,y;
@@ -26,6 +27,7 @@ final class VirtualGamepadView extends View {
     private final SparseArray<Touch> touches=new SparseArray<>();
     private final Handler macroHandler=new Handler(Looper.getMainLooper());
     private int macroButtons,macroIndex,activeMacroControl=-1;
+    private int macroLt,macroRt;
     private GamepadLayout.Macro playingMacro;
     private final Runnable macroPressNext=this::pressNextMacroStep;
     private final Runnable macroReleaseStep=this::releaseMacroStep;
@@ -38,6 +40,7 @@ final class VirtualGamepadView extends View {
     private int selected=-1,dragPointer=-1;
     private float dragDx,dragDy,drawAlpha=1;
     private SelectionListener listener;
+    private InputCapture inputCapture;
     VirtualGamepadView(Context context,StateSink sink,Runnable customize){this(context,GamepadLayout.load(context),sink,customize,null,false);}
     VirtualGamepadView(Context context,StateSink sink,Runnable customize,Runnable onMenu){this(context,GamepadLayout.load(context),sink,customize,onMenu,false);}
     VirtualGamepadView(Context context,GamepadLayout layout,StateSink sink,Runnable customize,boolean editor){this(context,layout,sink,customize,null,editor);}
@@ -55,7 +58,12 @@ final class VirtualGamepadView extends View {
     void replaceLayout(GamepadLayout value){releaseAll();layout=value;select(GamepadLayout.LEFT_STICK);constrain();}
     void reloadLayout(){if(!editor){releaseAll();layout=GamepadLayout.load(getContext());constrain();invalidate();}}
     void changed(){constrain();invalidate();}
-    void releaseAll(){touches.clear();dragPointer=-1;cancelMacro();sink.send(0,0,0,0,0,0,0);invalidate();}
+    void releaseAll(){touches.clear();dragPointer=-1;cancelMacro();if(inputCapture!=null)inputCapture.changed(0,0,0);sink.send(0,0,0,0,0,0,0);invalidate();}
+    void setInputCapture(InputCapture capture){
+        touches.clear();dragPointer=-1;cancelMacro();inputCapture=capture;
+        if(inputCapture!=null)inputCapture.changed(0,0,0);
+        invalidate();
+    }
     private void constrain(){for(GamepadLayout.Control c:layout.controls)layout.constrain(c,getWidth(),getHeight());}
     @Override protected void onSizeChanged(int w,int h,int oldw,int oldh){super.onSizeChanged(w,h,oldw,oldh);releaseAll();constrain();}
     @Override protected void onDetachedFromWindow(){releaseAll();super.onDetachedFromWindow();}
@@ -136,16 +144,16 @@ final class VirtualGamepadView extends View {
     private void pressNextMacroStep(){
         if(playingMacro==null)return;
         if(macroIndex>=playingMacro.steps.size()){finishMacro();return;}
-        GamepadLayout.MacroStep step=playingMacro.steps.get(macroIndex);macroButtons=step.buttons;sendState();
+        GamepadLayout.MacroStep step=playingMacro.steps.get(macroIndex);macroButtons=step.buttons;macroLt=step.leftTrigger;macroRt=step.rightTrigger;sendState();
         macroHandler.postDelayed(macroReleaseStep,step.holdMs);
     }
     private void releaseMacroStep(){
-        if(playingMacro==null)return;GamepadLayout.MacroStep step=playingMacro.steps.get(macroIndex++);macroButtons=0;sendState();
+        if(playingMacro==null)return;GamepadLayout.MacroStep step=playingMacro.steps.get(macroIndex++);macroButtons=0;macroLt=macroRt=0;sendState();
         if(macroIndex>=playingMacro.steps.size()){finishMacro();return;}
         macroHandler.postDelayed(macroPressNext,step.gapMs);
     }
-    private void finishMacro(){playingMacro=null;macroButtons=0;activeMacroControl=-1;sendState();}
-    private void cancelMacro(){macroHandler.removeCallbacks(macroPressNext);macroHandler.removeCallbacks(macroReleaseStep);playingMacro=null;macroButtons=0;activeMacroControl=-1;}
+    private void finishMacro(){playingMacro=null;macroButtons=macroLt=macroRt=0;activeMacroControl=-1;sendState();}
+    private void cancelMacro(){macroHandler.removeCallbacks(macroPressNext);macroHandler.removeCallbacks(macroReleaseStep);playingMacro=null;macroButtons=macroLt=macroRt=0;activeMacroControl=-1;}
     private float[] axes(GamepadLayout.Control c,boolean deadzone){
         for(int i=0;i<touches.size();i++){Touch t=touches.valueAt(i);if(t.control!=c.id)continue;
             float x=(t.x-c.x*getWidth())/c.radius(GamepadLayout.unit(getWidth(),getHeight())),y=(c.y*getHeight()-t.y)/c.radius(GamepadLayout.unit(getWidth(),getHeight()));
@@ -172,14 +180,16 @@ final class VirtualGamepadView extends View {
     }
     private void sendState(){
         int buttons=0,lt=0,rt=0;float lx=0,ly=0,rx=0,ry=0;
-        for(GamepadLayout.Control c:layout.controls){if(!c.visible)continue;
+        for(GamepadLayout.Control c:layout.controls){if(!c.visible && inputCapture==null)continue;
             if(c.kind==GamepadLayout.DPAD)buttons|=dpad(c);
             else if(c.kind==GamepadLayout.STICK){float[] a=axes(c,true);if(c.id==GamepadLayout.LEFT_STICK){lx=a[0];ly=a[1];}else{rx=a[0];ry=a[1];}}
             else if(pressed(c.id)){if(c.id==GamepadLayout.LEFT_TRIGGER)lt=255;else if(c.id==GamepadLayout.RIGHT_TRIGGER)rt=255;else buttons|=c.bit;}
         }
         if(layout.mirrorLeftDpad){if(lx<-.35f)buttons|=4;if(lx>.35f)buttons|=8;if(ly>.35f)buttons|=1;if(ly<-.35f)buttons|=2;}
-        buttons|=macroButtons;
-        sink.send(buttons,Math.round(lx*32767),Math.round(ly*32767),Math.round(rx*32767),Math.round(ry*32767),lt,rt);invalidate();
+        buttons|=macroButtons;lt=Math.max(lt,macroLt);rt=Math.max(rt,macroRt);
+        if(inputCapture!=null)inputCapture.changed(buttons,lt,rt);
+        else sink.send(buttons,Math.round(lx*32767),Math.round(ly*32767),Math.round(rx*32767),Math.round(ry*32767),lt,rt);
+        invalidate();
     }
     @Override public boolean onTouchEvent(MotionEvent event){
         if(event.getPointerCount()==0){releaseAll();return false;}
@@ -191,6 +201,11 @@ final class VirtualGamepadView extends View {
             if(control==TOGGLE){releaseAll();visible=!visible;invalidate();performClick();return true;}
             if(control==EDIT){releaseAll();if(customize!=null)customize.run();performClick();return true;}
             if(control==NONE)return editor || touches.size()>0;
+            if(editor && inputCapture!=null){
+                GamepadLayout.Control c=layout.find(control);
+                if(c==null || c.kind==GamepadLayout.MACRO)return true;
+                touches.put(id,new Touch(control,event.getX(index),event.getY(index)));sendState();return true;
+            }
             if(editor){if(dragPointer!=-1)return true;select(control);dragPointer=id;GamepadLayout.Control c=selection();dragDx=event.getX(index)-c.x*getWidth();dragDy=event.getY(index)-c.y*getHeight();return true;}
             GamepadLayout.Control c=layout.find(control);if(c.kind==GamepadLayout.STICK && pressed(control))return true;
             touches.put(id,new Touch(control,event.getX(index),event.getY(index)));
@@ -198,11 +213,12 @@ final class VirtualGamepadView extends View {
             sendState();return true;
         }
         if(action==MotionEvent.ACTION_MOVE){
+            if(editor && inputCapture!=null){for(int i=0;i<event.getPointerCount();i++){Touch t=touches.get(event.getPointerId(i));if(t!=null){t.x=event.getX(i);t.y=event.getY(i);}}sendState();return true;}
             if(editor){int slot=event.findPointerIndex(dragPointer);GamepadLayout.Control c=selection();if(slot>=0 && c!=null){c.x=(event.getX(slot)-dragDx)/getWidth();c.y=(event.getY(slot)-dragDy)/getHeight();layout.constrain(c,getWidth(),getHeight());invalidate();}return true;}
             for(int i=0;i<event.getPointerCount();i++){Touch t=touches.get(event.getPointerId(i));if(t!=null){t.x=event.getX(i);t.y=event.getY(i);}}
             if(touches.size()>0)sendState();return touches.size()>0;
         }
-        if(action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_POINTER_UP){if(editor){if(id==dragPointer)dragPointer=-1;return true;}
+        if(action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_POINTER_UP){if(editor && inputCapture!=null){touches.remove(id);sendState();return true;}if(editor){if(id==dragPointer)dragPointer=-1;return true;}
             boolean owned=touches.get(id)!=null;touches.remove(id);sendState();return owned;}
         return editor || touches.size()>0;
     }

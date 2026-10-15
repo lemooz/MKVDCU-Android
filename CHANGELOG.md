@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.1.12 — pré-release
+
+### Português
+
+- Limitador de apresentações Android com opções 24, 30, 45, 60, 90 e 120 FPS ou sem limite; inclui frames gerados.
+- Espera por deadline no loop SDL, com coalescimento de pedidos, sem pausa no XE_SWAP e sem segurar locks Vulkan.
+- HUD separa FPS do jogo, apresentações bem-sucedidas por segundo e limite configurado. PWR mantém 24 FPS e limita opções maiores a 30.
+- Validação local de cadência, retomada de frame pendente e configurações; validação física ainda necessária.
+
+### English
+
+- Android presentation limiter with 24, 30, 45, 60, 90 and 120 FPS or uncapped options, including generated frames.
+- SDL deadline scheduling coalesces requests without sleeping in XE_SWAP or holding Vulkan locks.
+- HUD separates game FPS, successful presentations per second and configured cap. PWR preserves 24 FPS and caps higher settings at 30.
+- Local pacing, pending-frame recovery and settings regressions; device validation remains pending.
+
+## v0.1.11 — local / not published
+
+### Português
+
+- Backoff configurável no loop de ring GPU cheio, preservando simulação e watchdog; tempo de espera registrado separadamente.
+- Remoção conservadora de passes dinâmicos vazios, mantendo draws, estados, clears e sincronização necessária.
+- Opções experimentais, desligadas por padrão: precisão reduzida em ALU saturada de fragmentos e DXT1 decodificado em RGB5A1 de 16 bits, preservando transparência.
+- Caches de pipeline separados por perfil de precisão; diagnóstico da arena inclui formatos e estado de depth/scissor.
+- Regressões locais de configuração, buffer diferido, backoff e execução Vulkan do decoder. Ganhos de FPS/térmica e correção do chão ainda exigem validação na Mali.
+
+### English
+
+- Configurable GPU ring-full polling backoff preserves simulation and the guest watchdog; voluntary CPU wait time is recorded separately.
+- Conservatively remove empty dynamic passes while preserving draws, state, clears and required synchronization.
+- Experimental options, disabled by default: reduced precision for saturated fragment ALU and direct 16-bit RGB5A1 DXT1 decoding with preserved alpha.
+- Precision-specific pipeline caches and arena diagnostics covering depth formats/state and scissor origin.
+- Local settings, deferred replay, backoff and Vulkan decoder regressions. Mali FPS/thermal gains and the arena floor fix still need physical validation.
+
 ## v0.1.6 — 2026-10-15 (pré-release)
 
 Atualização cumulativa desde a v0.1.5, focada em escala real da cena UE3 e medição de otimizações Vulkan. A compatibilidade gráfica e o desempenho continuam experimentais; não há nova validação física nem promessa de FPS nesta versão.

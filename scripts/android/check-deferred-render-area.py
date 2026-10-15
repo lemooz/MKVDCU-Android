@@ -1,7 +1,7 @@
 """Replay the production deferred buffer with fake Vulkan command sinks (no GPU)."""
 import os, pathlib, re, subprocess, tempfile
-root=pathlib.Path(__file__).resolve().parents[1]
-sdkroot=root/'MKVDCU-Recomp/references/rexglue-sdk'
+root=pathlib.Path(__file__).resolve().parents[2]
+sdkroot=root/'references/rexglue-sdk'
 source=sdkroot/'src/graphics/vulkan/deferred_command_buffer.cpp'
 compiler=sorted(pathlib.Path('C:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC').glob('*/bin/Hostx64/x64/cl.exe'))[-1]
 msvc=compiler.parents[3]; winsdk=pathlib.Path('C:/Program Files (x86)/Windows Kits/10')
@@ -11,7 +11,7 @@ env['PATH']=str(compiler.parent)+os.pathsep+env['PATH']
 env['INCLUDE']=os.pathsep.join(str(p) for p in [msvc/'include',winsdk/'Include'/version/'ucrt',winsdk/'Include'/version/'shared',winsdk/'Include'/version/'um'])
 env['LIB']=os.pathsep.join(str(p) for p in [msvc/'lib/x64',winsdk/'Lib'/version/'ucrt/x64',winsdk/'Lib'/version/'um/x64'])
 names=set(re.findall(r'dfn\.(vk\w+)',source.read_text()))
-observed={'vkCmdBeginRenderPass','vkCmdBeginRendering','vkCmdDraw','vkCmdDrawIndexed'}
+observed={'vkCmdBeginRenderPass','vkCmdBeginRendering','vkCmdDraw','vkCmdDrawIndexed','vkCmdSetDepthBias'}
 fields='\n'.join(('PFN_'+n+' '+n+' = nullptr;') if n in observed else ('Ignore '+n+';') for n in sorted(names))
 with tempfile.TemporaryDirectory(prefix='mkvdcu-deferred-area-') as tmp:
  d=pathlib.Path(tmp)
@@ -19,6 +19,7 @@ with tempfile.TemporaryDirectory(prefix='mkvdcu-deferred-area-') as tmp:
  'rex/assert.h':'#pragma once\n#include <cassert>\n#define assert_true(x) assert(x)\n#define assert_false(x) assert(!(x))\n#define assert_null(x) assert(!(x))\n#define assert_not_null(x) assert(x)\n#define assert_unhandled_case(x) assert(false)\n',
  'rex/math.h':'#pragma once\n#include <cstddef>\nnamespace rex {template<class T,class U> constexpr T align(T v,U a){return (v+T(a)-1)&~(T(a)-1);}}\n',
  'rex/dbg.h':'#pragma once\n',
+ 'rex/diagnostics/performance.h':'#pragma once\nnamespace rex::diagnostics {enum class GraphicsMetric {RenderPassBegins,EmptyRenderPassesElided}; inline void RecordGraphicsMetric(GraphicsMetric) {}}\n',
  'rex/graphics/flags.h':'#pragma once\n#define XE_GPU_FINE_GRAINED_DRAW_SCOPES 0\n',
  'rex/ui/vulkan/api.h':'#pragma once\n#define VK_NO_PROTOTYPES\n#include <vulkan/vulkan.h>\n',
  'rex/graphics/vulkan/command_processor.h': '#pragma once\n#include <rex/ui/vulkan/api.h>\nnamespace rex::ui::vulkan {struct VulkanDevice {struct Ignore {template<class... T>void operator()(T...)const{}}; struct Functions {'+fields+'}; Functions f; const Functions& functions()const{return f;}};} namespace rex::graphics::vulkan {struct VulkanCommandProcessor {rex::ui::vulkan::VulkanDevice device; const auto* GetVulkanDevice()const{return &device;}};}\n'
@@ -30,13 +31,14 @@ with tempfile.TemporaryDirectory(prefix='mkvdcu-deferred-area-') as tmp:
 #include <rex/graphics/vulkan/command_processor.h>
 #include <rex/graphics/vulkan/deferred_command_buffer.h>
 using namespace rex::graphics::vulkan;
-VkRect2D last{}; unsigned begins=0,draws=0,indexed=0;
+VkRect2D last{}; unsigned begins=0,draws=0,indexed=0,biases=0;
 VKAPI_ATTR void VKAPI_CALL Begin(VkCommandBuffer,const VkRenderPassBeginInfo* i,VkSubpassContents){last=i->renderArea;++begins;}
 VKAPI_ATTR void VKAPI_CALL Dynamic(VkCommandBuffer,const VkRenderingInfo* i){last=i->renderArea;++begins;assert(i->colorAttachmentCount==1);assert(i->pColorAttachments[0].imageView==(VkImageView)1);}
 VKAPI_ATTR void VKAPI_CALL Draw(VkCommandBuffer,uint32_t,uint32_t,uint32_t,uint32_t){++draws;}
 VKAPI_ATTR void VKAPI_CALL Indexed(VkCommandBuffer,uint32_t,uint32_t,uint32_t,int32_t,uint32_t){++indexed;}
+VKAPI_ATTR void VKAPI_CALL Bias(VkCommandBuffer,float constant,float clamp,float slope){assert(constant==1&&clamp==0&&slope==1);++biases;}
 int main(){
- VulkanCommandProcessor cp;cp.device.f.vkCmdBeginRenderPass=Begin;cp.device.f.vkCmdBeginRendering=Dynamic;cp.device.f.vkCmdDraw=Draw;cp.device.f.vkCmdDrawIndexed=Indexed;
+ VulkanCommandProcessor cp;cp.device.f.vkCmdBeginRenderPass=Begin;cp.device.f.vkCmdBeginRendering=Dynamic;cp.device.f.vkCmdDraw=Draw;cp.device.f.vkCmdDrawIndexed=Indexed;cp.device.f.vkCmdSetDepthBias=Bias;
  DeferredCommandBuffer b(cp,8);VkRect2D area{{0,0},{32,32}};
  assert(!b.ExpandOpenRenderArea(area));
  VkRenderPassBeginInfo rp{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};rp.renderArea={{32,32},{32,32}};
@@ -57,6 +59,16 @@ int main(){
  b.CmdVkDrawIndexed(0,1,0,0,0);b.CmdVkDrawIndexed(3,0,0,0,0);
  b.Execute(VK_NULL_HANDLE);assert(draws==10001&&indexed==0);b.Reset();
  b.CmdVkDrawIndexed(3,1,0,0,0);b.Execute(VK_NULL_HANDLE);assert(indexed==1);
+ b.Reset();ri.flags=0;att.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;att.storeOp=VK_ATTACHMENT_STORE_OP_STORE;
+ b.CmdVkBeginRendering(&ri);b.CmdVkSetDepthBias(1,0,1);assert(b.DiscardEmptyDynamicRenderPass());
+ b.Execute(VK_NULL_HANDLE);assert(begins==2&&biases==1);b.Reset();
+ b.CmdVkBeginRendering(&ri);b.CmdVkDraw(3,1,0,0);assert(!b.DiscardEmptyDynamicRenderPass());
+ b.CmdVkEndRendering();b.Execute(VK_NULL_HANDLE);assert(begins==3&&draws==10002);b.Reset();
+ att.loadOp=VK_ATTACHMENT_LOAD_OP_CLEAR;b.CmdVkBeginRendering(&ri);assert(!b.DiscardEmptyDynamicRenderPass());b.Reset();
+ att.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD;att.storeOp=VK_ATTACHMENT_STORE_OP_DONT_CARE;b.CmdVkBeginRendering(&ri);assert(!b.DiscardEmptyDynamicRenderPass());b.Reset();
+ att.storeOp=VK_ATTACHMENT_STORE_OP_STORE;ri.flags=VK_RENDERING_SUSPENDING_BIT;b.CmdVkBeginRendering(&ri);assert(!b.DiscardEmptyDynamicRenderPass());b.Reset();
+ ri.flags=0;b.CmdVkBeginRendering(&ri);b.CmdVkBeginQuery(VK_NULL_HANDLE,0,0);assert(!b.DiscardEmptyDynamicRenderPass());b.Reset();
+ b.CmdVkBeginRenderPass(&rp,VK_SUBPASS_CONTENTS_INLINE);assert(!b.DiscardEmptyDynamicRenderPass());b.Reset();
 }
 ''')
  vulkan=next(sdkroot.glob('thirdparty/**/vulkan/vulkan.h')).parents[1]

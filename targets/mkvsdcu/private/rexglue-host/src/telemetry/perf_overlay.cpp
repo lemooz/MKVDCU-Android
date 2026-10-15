@@ -287,11 +287,11 @@ void PerfOverlay::DrawCompact(const telemetry::FrameStats& frames,
   }
   telemetry::RecentFrameTimes(frame_times_, 180);
 #if defined(__ANDROID__)
-  ImGui::Text("RAM RSS: %.0f MiB | texture budget: %d/%d MiB | display request: %d Hz",
+  ImGui::Text("RAM RSS: %.0f MiB | texture budget: %d/%d MiB | presentation cap: %d FPS",
       system.working_set_bytes / 1048576.0,
       rex::cvar::Query<int32_t>("texture_cache_memory_limit_soft"),
       rex::cvar::Query<int32_t>("texture_cache_memory_limit_hard"),
-      rex::cvar::Query<int32_t>("gpu_frame_rate_limit"));
+      rex::cvar::Query<int32_t>("present_frame_rate_limit"));
   const int gpu_timing_interval = rex::cvar::Query<int32_t>("vulkan_gpu_timing_interval");
   if (gpu_timing_interval > 0 && system.gpu_submission_ms >= 0)
     ImGui::Text("GPU / submit sampled 1/%d: %.2f ms", gpu_timing_interval, system.gpu_submission_ms);

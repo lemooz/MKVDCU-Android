@@ -47,9 +47,13 @@ public final class PerformanceOverlayView extends LinearLayout {
         String getPerformanceSnapshot();
         String getHealthSnapshot();
         String getDriverName();
+        default long getPresentCount() { return -1; }
     }
 
     private SnapshotProvider provider;
+    private long lastPresentCount = -1, lastPresentAt;
+    private volatile int presentationLimit;
+    public void setPresentationLimit(int fps) { presentationLimit = fps; }
     private Runnable onCloseCallback;
 
     private TextView titleView;
@@ -65,6 +69,7 @@ public final class PerformanceOverlayView extends LinearLayout {
     private float gpuSubmissionMs = -1f;
     private long gpuSampleAt;
     private String outputSize = "--";
+    private volatile String cpuPolicyStatus = "CPU: política ainda não informada";
     private boolean isCompactMode = false;
 
     // CPU Tracking
@@ -199,6 +204,10 @@ public final class PerformanceOverlayView extends LinearLayout {
         this.provider = provider;
     }
 
+    public void setCpuPolicyStatus(String status) {
+        cpuPolicyStatus = status == null || status.isEmpty() ? "CPU: política n/d" : status;
+    }
+
     public void setOnCloseCallback(Runnable onCloseCallback) {
         this.onCloseCallback = onCloseCallback;
     }
@@ -215,6 +224,7 @@ public final class PerformanceOverlayView extends LinearLayout {
         isRunning = true;
         setVisibility(VISIBLE);
         final int token = ++generation;
+        lastPresentCount = -1; lastPresentAt = 0;
         sampler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "Android HUD");
             t.setPriority(Thread.MIN_PRIORITY);
@@ -245,6 +255,14 @@ public final class PerformanceOverlayView extends LinearLayout {
     private void updateMetrics(int token) {
         Context context = getContext();
         if (context == null) return;
+
+        long presentAt = SystemClock.elapsedRealtime();
+        long presentCount = provider == null ? -1 : provider.getPresentCount();
+        float presentFps = lastPresentCount >= 0 && presentCount >= lastPresentCount && presentAt > lastPresentAt
+            ? (presentCount-lastPresentCount)*1000f/(presentAt-lastPresentAt) : -1f;
+        lastPresentCount = presentCount; lastPresentAt = presentAt;
+        final String outputCadence = (presentFps >= 0 ? String.format(java.util.Locale.US, "%.1f", presentFps) : "n/d")
+            + " FPS / " + (presentationLimit > 0 ? "limite " + presentationLimit : "sem limite");
 
         // 1. FPS & Frametimes
         float fps = 0f;
@@ -334,27 +352,30 @@ public final class PerformanceOverlayView extends LinearLayout {
         final long fRss=appMemMb;
         final int fLevel=batLevel, fShaders=totalShaders, fPipelines=totalPipelines, fAllowed=allowedCpuCount();
         final boolean fCharging=isCharging;
-        final String fDriver=driverName, fOutput=outputSize;
+        final String fDriver=driverName, fOutput=outputSize, fCpuPolicy=cpuPolicyStatus;
         final float fGpuMs=SystemClock.elapsedRealtime()-gpuSampleAt <= 5000 ? gpuSubmissionMs : -1f;
         updateHandler.post(() -> {
             if (!isRunning || generation != token) return;
-            if (isCompactMode) buildCompactText(fFps,fTime,fGpu,fCpu,fUsed,fBat);
+            if (isCompactMode) buildCompactText(fFps,fTime,fGpu,fCpu,fUsed,fBat,outputCadence);
             else buildFullMangoHudText(fFps,fTime,fGpu,fDriver,fCpu,fTemp,fUsed,fTotal,
-                    fRss,fBat,fLevel,fCharging,fShaders,fPipelines,fOutput,fGpuMs,fAllowed);
+                    fRss,fBat,fLevel,fCharging,fShaders,fPipelines,fOutput,fGpuMs,fAllowed,fCpuPolicy,outputCadence);
         });
     }
 
     private void buildFullMangoHudText(float fps, float frametimeMs, float gpuUsage, String driverName,
                                       float cpuUsage, float cpuTempC, float usedRamGb, float totalRamGb,
                                       long appMemMb, float batTempC, int batLevel, boolean isCharging,
-                                      int shaders, int pipelines, String output, float gpuMs, int allowedCores) {
+                                      int shaders, int pipelines, String output, float gpuMs, int allowedCores,
+                                      String cpuPolicy, String outputCadence) {
         StringBuilder sb = new StringBuilder();
 
         // FPS line: Bold Neon Green / Cyan
         String fpsColor = fps >= 55f ? "#00FF66" : fps >= 28f ? "#FACC15" : "#EF4444";
-        sb.append("<font color=\"").append(fpsColor).append("\"><b>FPS  </b></font>")
+        sb.append("<font color=\"").append(fpsColor).append("\"><b>JOGO </b></font>")
           .append("<font color=\"#FFFFFF\"><b>").append(String.format("%.1f", fps)).append("</b></font>  ")
           .append("<font color=\"#86EFAC\">").append(String.format("%.1f ms", frametimeMs)).append("</font><br>");
+
+        sb.append("<font color=\"#67E8F9\"><b>SAÍDA </b></font>").append(outputCadence).append("<br>");
 
         // GPU line: Coral Orange
         sb.append("<font color=\"#FB923C\"><b>GPU  </b></font>")
@@ -366,7 +387,8 @@ public final class PerformanceOverlayView extends LinearLayout {
         sb.append("<font color=\"#38BDF8\"><b>CPU  </b></font>")
           .append("<font color=\"#FFFFFF\"><b>").append((int) cpuUsage).append("%</b></font>  ")
           .append("<font color=\"#7DD3FC\">").append(cpuTempC >= 0 ? String.format("%.1f°C", cpuTempC) : "n/d").append("</font>  ")
-          .append("<font color=\"#94A3B8\">(").append(allowedCores >= 0 ? allowedCores+" afin. / " : "").append(cores).append(" lóg.; app)</font><br>");
+          .append("<font color=\"#94A3B8\">(").append(allowedCores >= 0 ? allowedCores+" CPUs elegíveis / " : "").append(cores).append(" disponíveis)</font><br>")
+          .append("<font color=\"#94A3B8\">").append(Html.escapeHtml(cpuPolicy)).append("</font><br>");
 
         // RAM line: Violet / Orchid
         sb.append("<font color=\"#C084FC\"><b>RAM  </b></font>")
@@ -394,10 +416,11 @@ public final class PerformanceOverlayView extends LinearLayout {
     }
 
     private void buildCompactText(float fps, float frametimeMs, float gpuUsage, float cpuUsage,
-                                  float usedRamGb, float batTempC) {
+                                  float usedRamGb, float batTempC, String outputCadence) {
         String fpsColor = fps >= 55f ? "#00FF66" : fps >= 28f ? "#FACC15" : "#EF4444";
-        String html = "<font color=\"" + fpsColor + "\"><b>" + String.format("%.1f FPS", fps) + "</b></font> " +
+        String html = "<font color=\"" + fpsColor + "\"><b>" + String.format("Jogo %.1f FPS", fps) + "</b></font> " +
                 "<font color=\"#94A3B8\">|</font> " +
+                "<font color=\"#67E8F9\">Saída " + outputCadence + "</font> | " +
                 "<font color=\"#FB923C\">GPU " + percent(gpuUsage) + "</font> " +
                 "<font color=\"#94A3B8\">|</font> " +
                 "<font color=\"#38BDF8\">CPU " + (int) cpuUsage + "%</font> " +
@@ -451,7 +474,9 @@ public final class PerformanceOverlayView extends LinearLayout {
             long now = SystemClock.elapsedRealtime();
             long cpuTime = Process.getElapsedCpuTime();
             if (lastCpuRealtime > 0 && now > lastCpuRealtime) {
-                long timeDelta = (now - lastCpuRealtime) * Runtime.getRuntime().availableProcessors();
+                int eligibleCpus = allowedCpuCount();
+                if (eligibleCpus < 1) eligibleCpus = Runtime.getRuntime().availableProcessors();
+                long timeDelta = (now - lastCpuRealtime) * eligibleCpus;
                 long cpuDelta = cpuTime - lastCpuTime;
                 if (timeDelta > 0) {
                     cachedCpuUsage = Math.min(100f, Math.max(0f, (cpuDelta * 100f) / (float) timeDelta));

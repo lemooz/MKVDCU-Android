@@ -17,8 +17,12 @@ final class GamepadLayout {
     static final int LEFT_STICK=100, RIGHT_STICK=101, DIRECTIONAL=102, LEFT_TRIGGER=103, RIGHT_TRIGGER=104;
     static final int FIRST_MACRO_CONTROL=1000;
     static final class MacroStep {
-        final int buttons,holdMs,gapMs;
-        MacroStep(int buttons,int holdMs,int gapMs){this.buttons=buttons;this.holdMs=holdMs;this.gapMs=gapMs;}
+        final int buttons,holdMs,gapMs,leftTrigger,rightTrigger;
+        MacroStep(int buttons,int holdMs,int gapMs){this(buttons,holdMs,gapMs,0,0);}
+        MacroStep(int buttons,int holdMs,int gapMs,int leftTrigger,int rightTrigger){
+            this.buttons=buttons;this.holdMs=holdMs;this.gapMs=gapMs;
+            this.leftTrigger=Math.max(0,Math.min(255,leftTrigger));this.rightTrigger=Math.max(0,Math.min(255,rightTrigger));
+        }
     }
     static final class Macro {
         final int id;
@@ -92,16 +96,16 @@ final class GamepadLayout {
         c.x=clamp(c.x,dx,1-dx,.5f);c.y=clamp(c.y,dy,1-dy,.6f);
     }
     JSONObject toJson() throws org.json.JSONException {
-        JSONObject j=new JSONObject().put("version",2).put("opacity",opacity).put("deadzone",deadzone).put("mirrorLeftDpad",mirrorLeftDpad);
+        JSONObject j=new JSONObject().put("version",3).put("opacity",opacity).put("deadzone",deadzone).put("mirrorLeftDpad",mirrorLeftDpad);
         JSONArray a=new JSONArray();
         for(Control c:controls)a.put(new JSONObject().put("id",c.id).put("x",c.x).put("y",c.y).put("size",c.size).put("visible",c.visible));
         JSONArray macrosJson=new JSONArray();
-        for(Macro m:macros){JSONArray steps=new JSONArray();for(MacroStep s:m.steps)steps.put(new JSONObject().put("buttons",s.buttons).put("holdMs",s.holdMs).put("gapMs",s.gapMs));
+        for(Macro m:macros){JSONArray steps=new JSONArray();for(MacroStep s:m.steps)steps.put(new JSONObject().put("buttons",s.buttons).put("holdMs",s.holdMs).put("gapMs",s.gapMs).put("leftTrigger",s.leftTrigger).put("rightTrigger",s.rightTrigger));
             macrosJson.put(new JSONObject().put("id",m.id).put("name",m.name).put("steps",steps));}
         return j.put("controls",a).put("macros",macrosJson);
     }
     static GamepadLayout fromJson(JSONObject j){
-        GamepadLayout l=defaults();int version=j.optInt("version");if(version<1 || version>2)return l;
+        GamepadLayout l=defaults();int version=j.optInt("version");if(version<1 || version>3)return l;
         l.opacity=clamp((float)j.optDouble("opacity",.78),.20f,1,.78f);
         l.deadzone=clamp((float)j.optDouble("deadzone",.12),0,.35f,.12f);
         l.mirrorLeftDpad=j.optBoolean("mirrorLeftDpad",false);
@@ -115,9 +119,11 @@ final class GamepadLayout {
                 for(int k=0;k<sj.length();k++){
                     JSONObject step=sj.optJSONObject(k);if(step==null)continue;
                     int buttons=step.optInt("buttons",0)&0xF0FF;
-                    if(buttons==0)continue;
+                    int leftTrigger=version>=3?Math.max(0,Math.min(255,step.optInt("leftTrigger",0))):0;
+                    int rightTrigger=version>=3?Math.max(0,Math.min(255,step.optInt("rightTrigger",0))):0;
+                    if(buttons==0 && leftTrigger==0 && rightTrigger==0)continue;
                     int hold=step.optInt("holdMs",90),gap=step.optInt("gapMs",60);
-                    steps.add(new MacroStep(buttons,Math.max(20,Math.min(500,hold)),Math.max(0,Math.min(500,gap))));
+                    steps.add(new MacroStep(buttons,Math.max(20,Math.min(500,hold)),Math.max(0,Math.min(500,gap)),leftTrigger,rightTrigger));
                 }
                 if(steps.isEmpty())continue;
                 JSONObject position=null;JSONArray saved=j.optJSONArray("controls");

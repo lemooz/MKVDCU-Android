@@ -19,7 +19,7 @@ final class GraphicsSettings {
     static final int[] SCALES = {100, 75, 50};
     static final String[] SCALE_NAMES = {"1× — cena 1040×624", "0,75× — cena 780×468 (experimental)", "0,5× — cena 520×312 (experimental)"};
     static final int[] CORE_COUNTS = {0, 1, 2, 3, 4, 6, 8, 12};
-    static final int[] FPS_LIMITS = {0, 30, 45, 60, 90, 120};
+    static final int[] FPS_LIMITS = {0, 24, 30, 45, 60, 90, 120};
 
     static final int PRESET_LOW = 0;
     static final int PRESET_BALANCED = 1;
@@ -30,9 +30,9 @@ final class GraphicsSettings {
         "Alto — qualidade"
     };
     static final String[] PRESET_DESCRIPTIONS = {
-        "Cena solicitada 0,5× (520×312), saída 720p, mip DXT +1, cache 256/512 MiB, submissões agrupadas e pedido de tela 30 Hz. Escala experimental; não limita a simulação do jogo.",
-        "Cena solicitada 0,75× (780×468), saída 720p, texturas originais, cache 384/768 MiB, submissões agrupadas e pedido de tela 60 Hz. Escala experimental; não limita a simulação do jogo.",
-        "Cena nativa 1040×624, saída 720p, texturas originais, filtragem 2×, cache 768/1536 MiB e pedido de tela 60 Hz. Maior uso de RAM."
+        "Cena solicitada 0,5× (520×312), saída 720p, mip DXT +1, cache 256/512 MiB, submissões agrupadas e limite de saída 30 FPS. Escala experimental; não limita a simulação do jogo.",
+        "Cena solicitada 0,75× (780×468), saída 720p, texturas originais, cache 384/768 MiB, submissões agrupadas e limite de saída 60 FPS. Escala experimental; não limita a simulação do jogo.",
+        "Cena nativa 1040×624, saída 720p, texturas originais, filtragem 2×, cache 768/1536 MiB e limite de saída 60 FPS. Maior uso de RAM."
     };
 
     static final String[] TURNIP_MODES = {"Automático (padrão do driver)", "Sysmem (experimental)", "GMEM (experimental)"};
@@ -64,6 +64,9 @@ final class GraphicsSettings {
             .putBoolean(PREFIX + "economy", false)
             .putBoolean(PREFIX + "compact_memory", false)
             .putBoolean(PREFIX + "frame_generation", false)
+            .putBoolean(PREFIX + "ring_backoff", true)
+            .putBoolean(PREFIX + "relaxed_fragment", false)
+            .putBoolean(PREFIX + "compact_dxt1", false)
             .putInt(PREFIX + "fps_limit", low ? 30 : 60)
             .putInt(PREFIX + "pipeline_threads", -1)
             .putInt(PREFIX + "video_mode", 0)
@@ -75,8 +78,33 @@ final class GraphicsSettings {
     }
     int scalePercent() { return allowed(prefs.getInt(PREFIX + "scale_percent", 100), SCALES, 100); }
     void setScalePercent(int value) { editCustom().putInt(PREFIX + "scale_percent", allowed(value, SCALES, 100)).apply(); }
-    int cores() { return allowed(prefs.getInt(PREFIX + "cpu_cores", 0), CORE_COUNTS, 0); }
-    void setCores(int value) { editCustom().putInt(PREFIX + "cpu_cores", allowed(value, CORE_COUNTS, 0)).apply(); }
+    int cores() { return clampCores(prefs.getInt(PREFIX + "cpu_cores", 0)); }
+    void setCores(int value) { editCustom().putInt(PREFIX + "cpu_cores", clampCores(value)).apply(); }
+    static int[] coreCounts(Context context) {
+        int available = availableCpuCount();
+        java.util.ArrayList<Integer> options = new java.util.ArrayList<>();
+        options.add(0);
+        for (int count : CORE_COUNTS) if (count > 0 && count < available) options.add(count);
+        if (available > 1 && !options.contains(available)) options.add(available);
+        int[] result = new int[options.size()];
+        for (int i = 0; i < result.length; i++) result[i] = options.get(i);
+        return result;
+    }
+    private static int clampCores(int value) { return Math.min(Math.max(0, value), availableCpuCount()); }
+    private static int availableCpuCount() {
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader("/proc/thread-self/status"))) {
+            String line;
+            while ((line = reader.readLine()) != null) if (line.startsWith("Cpus_allowed_list:")) {
+                int count = 0;
+                for (String range : line.substring(line.indexOf(':') + 1).trim().split(",")) {
+                    String[] bounds = range.split("-");
+                    count += bounds.length == 1 ? 1 : Integer.parseInt(bounds[1]) - Integer.parseInt(bounds[0]) + 1;
+                }
+                if (count > 0) return count;
+            }
+        } catch (Exception ignored) { }
+        return Math.max(1, Runtime.getRuntime().availableProcessors());
+    }
     boolean economy() { return prefs.getBoolean(PREFIX + "economy", false); }
     void setEconomy(boolean value) { editCustom().putBoolean(PREFIX + "economy", value).apply(); }
     boolean compactMemory() { return prefs.getBoolean(PREFIX + "compact_memory", false); }
@@ -85,7 +113,13 @@ final class GraphicsSettings {
     void setFpsLimit(int value) { editCustom().putInt(PREFIX + "fps_limit", allowed(value, FPS_LIMITS, 60)).apply(); }
     boolean frameGeneration() { return prefs.getBoolean(PREFIX + "frame_generation", false); }
     void setFrameGeneration(boolean value) { editCustom().putBoolean(PREFIX + "frame_generation", value).apply(); }
-    static int cores(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "cpu_cores", 0), CORE_COUNTS, 0); }
+    boolean ringBackoff() { return prefs.getBoolean(PREFIX + "ring_backoff", true); }
+    void setRingBackoff(boolean value) { editCustom().putBoolean(PREFIX + "ring_backoff", value).apply(); }
+    boolean relaxedFragment() { return prefs.getBoolean(PREFIX + "relaxed_fragment", false); }
+    void setRelaxedFragment(boolean value) { editCustom().putBoolean(PREFIX + "relaxed_fragment", value).apply(); }
+    boolean compactDxt1() { return prefs.getBoolean(PREFIX + "compact_dxt1", false); }
+    void setCompactDxt1(boolean value) { editCustom().putBoolean(PREFIX + "compact_dxt1", value).apply(); }
+    static int cores(Intent intent) { return clampCores(intent.getIntExtra(PREFIX + "cpu_cores", 0)); }
     static boolean economy(Intent intent) { return intent.getBooleanExtra(PREFIX + "economy", false); }
     static int effectiveFpsLimit(Intent intent) {
         int limit = allowed(intent.getIntExtra(PREFIX + "fps_limit", 60), FPS_LIMITS, 60);
@@ -93,9 +127,8 @@ final class GraphicsSettings {
             ? (limit == 0 ? 30 : Math.min(limit, 30)) : limit;
     }
     static int displayRateRequestHz(Intent intent) {
-        int source = effectiveFpsLimit(intent);
-        if (source <= 0) return 0;
-        return Math.min(240, source * (intent.getBooleanExtra(PREFIX + "frame_generation", false) ? 2 : 1));
+        // Cap final presentations, including generated frames.
+        return effectiveFpsLimit(intent);
     }
     static int scalePercent(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "scale_percent", 100), SCALES, 100); }
     static String scaleDescription(Intent intent) { int n=scalePercent(intent);return (1040*n/100)+"×"+(624*n/100)+" (cena "+(n/100f)+"× solicitada; saída 1280×720)"; }
@@ -138,6 +171,7 @@ final class GraphicsSettings {
             .remove(PREFIX + "gpu_stages").remove(PREFIX + "turnip_mode").remove(PREFIX + "panvk_late_stencil").remove(PREFIX + "scale_percent").remove(PREFIX + "cpu_cores")
             .remove(PREFIX + "economy").remove(PREFIX + "compact_memory").remove(PREFIX + "fps_limit")
             .remove(PREFIX + "frame_generation")
+            .remove(PREFIX + "ring_backoff").remove(PREFIX + "relaxed_fragment").remove(PREFIX + "compact_dxt1")
             .remove(PREFIX + "active_preset").apply();
     }
     void attach(Intent intent) {
@@ -149,7 +183,10 @@ final class GraphicsSettings {
             .putExtra(PREFIX + "pipeline_threads", pipelineThreads()).putExtra(PREFIX + "turnip_mode", turnipMode()).putExtra(PREFIX + "panvk_late_stencil", panvkLateStencil())
             .putExtra(PREFIX + "scale_percent", scalePercent()).putExtra(PREFIX + "cpu_cores", cores())
             .putExtra(PREFIX + "economy", economy()).putExtra(PREFIX + "compact_memory", compactMemory()).putExtra(PREFIX + "fps_limit", fpsLimit())
-            .putExtra(PREFIX + "frame_generation", frameGeneration());
+            .putExtra(PREFIX + "frame_generation", frameGeneration())
+            .putExtra(PREFIX + "ring_backoff", ringBackoff())
+            .putExtra(PREFIX + "relaxed_fragment", relaxedFragment())
+            .putExtra(PREFIX + "compact_dxt1", compactDxt1());
     }
     static boolean sustained(Intent intent) { return intent.getBooleanExtra(PREFIX + "sustained", false); }
     static void appendArguments(Intent intent, List<String> args) {
@@ -159,9 +196,14 @@ final class GraphicsSettings {
         if (compact) cache = Math.min(cache, 128);
         int limit = effectiveFpsLimit(intent);
         args.add("--vulkan_separate_present_queue=" + intent.getBooleanExtra(PREFIX + "present_queue", false));
-        args.add("--gpu_frame_rate_limit=" + limit);
+        // Never pace guest XE_SWAP: that can slow the game simulation.
+        args.add("--gpu_frame_rate_limit=0");
+        args.add("--present_frame_rate_limit=" + limit);
         args.add("--gpu_frame_generation=" + intent.getBooleanExtra(PREFIX + "frame_generation", false));
         args.add("--gpu_frame_generation_factor=2");
+        args.add("--port_gpu_ring_backoff=" + intent.getBooleanExtra(PREFIX + "ring_backoff", true));
+        args.add("--vulkan_fragment_relaxed_precision=" + intent.getBooleanExtra(PREFIX + "relaxed_fragment", false));
+        args.add("--vulkan_dxt1_compact=" + intent.getBooleanExtra(PREFIX + "compact_dxt1", false));
         args.add("--port_internal_resolution_percent=100");
         args.add("--port_scene_resolution_percent=" + scalePercent(intent));
         args.add("--texture_cache_memory_limit_soft_lifetime=" + (compact ? 5 : 30));
@@ -201,7 +243,7 @@ final class GraphicsSettings {
     }
     static String summary(Intent intent) {
         return "separate_present_queue=" + intent.getBooleanExtra(PREFIX + "present_queue", false) + "; requested_internal=" + scaleDescription(intent) + "; cpu_cores=" + cores(intent) + "; economy=" + economy(intent) +
-            "; compact_memory=" + intent.getBooleanExtra(PREFIX + "compact_memory", false) + "; display_rate_request_hz=" + effectiveFpsLimit(intent) + "; anisotropic=" + allowed(intent.getIntExtra(PREFIX + "filter", -1), FILTERS, -1) +
+            "; compact_memory=" + intent.getBooleanExtra(PREFIX + "compact_memory", false) + "; presentation_limit_fps=" + effectiveFpsLimit(intent) + "; anisotropic=" + allowed(intent.getIntExtra(PREFIX + "filter", -1), FILTERS, -1) +
             "; texture_cache_soft_mb=" + allowed(intent.getIntExtra(PREFIX + "cache_mb", 384), CACHE_MB, 384) +
             "; spirv_ssa=" + ssa(intent) + "; scissor_area=" + area(intent) + "; transfer_area=" + intent.getBooleanExtra(PREFIX + "transfer_area", true) +
             "; sustained_requested=" + sustained(intent) + "; texture_mip_drop=" +
@@ -213,6 +255,9 @@ final class GraphicsSettings {
             "; pipeline_creation_threads_requested=" + allowed(intent.getIntExtra(PREFIX + "pipeline_threads", -1), PIPELINE_THREADS, -1) +
             "; pipeline_creation_threads_effective=" + effectivePipelineThreads(intent) +
             "; frame_generation_2x=" + intent.getBooleanExtra(PREFIX + "frame_generation", false) +
+            "; gpu_ring_backoff=" + intent.getBooleanExtra(PREFIX + "ring_backoff", true) +
+            "; relaxed_fragment=" + intent.getBooleanExtra(PREFIX + "relaxed_fragment", false) +
+            "; compact_dxt1=" + intent.getBooleanExtra(PREFIX + "compact_dxt1", false) +
             "; panvk_late_stencil=" + panvkLateStencil(intent) + "; turnip_mode=" + turnipMode(intent) + "; render_area_revision=deferred_union_1";
     }
     private static int allowed(int value, int[] choices, int fallback) {

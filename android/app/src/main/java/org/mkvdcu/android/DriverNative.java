@@ -18,6 +18,7 @@ final class DriverNative {
                                    String cacheDirectory, String[] dependencies, boolean disableLossyAfrc, int turnipMode, boolean panvkLateStencil);
     static native String probe(Surface surface);
     static native String identity();
+    static native long presentCount();
     static native String configureCpuLimit(int cores, boolean economy);
     static native void setDiagnosticMode(boolean enabled);
     static native void armCapture();

@@ -86,6 +86,7 @@ def main():
                             'Java_org_mkvdcu_android_DriverNative_probe',
                             'Java_org_mkvdcu_android_DriverNative_identity',
                             'Java_org_mkvdcu_android_DriverNative_configureCpuLimit',
+                            'Java_org_mkvdcu_android_DriverNative_presentCount',
                             'Java_org_mkvdcu_android_DriverNative_setPresentPreWaitBenchmark',
                             'Java_org_mkvdcu_android_DriverNative_setPresentQueueBenchmark',
                             'Java_org_mkvdcu_android_DriverNative_setDiagnosticMode'}

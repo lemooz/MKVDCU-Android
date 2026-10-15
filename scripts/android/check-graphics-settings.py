@@ -47,6 +47,15 @@ public class GraphicsHarness {
   check(args(i).contains("--vulkan_gpu_timing_interval=64"));
   check(args(i).contains("--vulkan_pipeline_creation_threads=2"));
   check(args(i).contains("--vulkan_gpu_stage_timing_interval=0"));
+  check(args(i).contains("--port_gpu_ring_backoff=true"));
+  check(args(i).contains("--vulkan_fragment_relaxed_precision=false"));
+  check(args(i).contains("--vulkan_dxt1_compact=false"));
+  g.setRingBackoff(false);g.setRelaxedFragment(true);g.setCompactDxt1(true);
+  Intent experimental=new Intent();g.attach(experimental);
+  check(args(experimental).contains("--port_gpu_ring_backoff=false"));
+  check(args(experimental).contains("--vulkan_fragment_relaxed_precision=true"));
+  check(args(experimental).contains("--vulkan_dxt1_compact=true"));
+  check(args(i).contains("--vulkan_dxt1_compact=false")); // running session is immutable
   check(args(i).contains("--vulkan_submit_on_primary_buffer_end=true"));
   check(args(i).contains("--video_mode_width=1280")&&args(i).contains("--video_mode_height=720"));
   g.setVideoMode(1);g.setGpuTiming(0);g.setBatch(true);
@@ -77,13 +86,15 @@ public class GraphicsHarness {
   g.applyPreset(GraphicsSettings.PRESET_LOW);
   check(g.activePreset()==GraphicsSettings.PRESET_LOW&&g.presetName().contains("Baixo"));
   Intent pLow=new Intent();g.attach(pLow);
+  check(args(pLow).contains("--port_gpu_ring_backoff=true"));
+  check(args(pLow).contains("--vulkan_fragment_relaxed_precision=false")&&args(pLow).contains("--vulkan_dxt1_compact=false"));
   check(args(pLow).contains("--anisotropic_override=0"));
   check(args(pLow).contains("--texture_cache_memory_limit_hard=512"));
   check(args(pLow).contains("--vulkan_submit_on_primary_buffer_end=false"));
   check(args(pLow).contains("--vulkan_gpu_timing_interval=64"));
   check(args(pLow).contains("--port_scene_resolution_percent=50"));
   check(args(pLow).contains("--port_internal_resolution_percent=100"));
-  check(args(pLow).contains("--gpu_frame_rate_limit=30"));
+  check(args(pLow).contains("--present_frame_rate_limit=30"));
   check(GraphicsSettings.scaleDescription(pLow).contains("520×312"));
   check(!args(pLow).stream().anyMatch(s->s.contains("disable_shadow")||s.contains("fast_postprocess")));
   g.applyPreset(GraphicsSettings.PRESET_HIGH);
@@ -105,9 +116,25 @@ public class GraphicsHarness {
   check(args(compact).contains("--texture_cache_memory_limit_soft=128"));
   check(args(compact).contains("--texture_cache_memory_limit_hard=256"));
   g.setEconomy(true);g.setFpsLimit(0);Intent economy=new Intent();g.attach(economy);
-  check(args(economy).contains("--gpu_frame_rate_limit=30"));
+  check(args(economy).contains("--present_frame_rate_limit=30"));
+  g.setEconomy(false);
+  check(java.util.Arrays.equals(GraphicsSettings.FPS_LIMITS,new int[]{0,24,30,45,60,90,120}));
+  for(int cap:GraphicsSettings.FPS_LIMITS) {
+   g.setFpsLimit(cap);g.setFrameGeneration(true);Intent paced=new Intent();g.attach(paced);
+   check(g.fpsLimit()==cap&&GraphicsSettings.effectiveFpsLimit(paced)==cap);
+   check(GraphicsSettings.displayRateRequestHz(paced)==cap); // FG cannot double the final cap.
+   check(args(paced).contains("--present_frame_rate_limit="+cap));
+   check(args(paced).contains("--gpu_frame_rate_limit=0")); // Preserve simulation speed.
+   g.setFpsLimit(60);check(GraphicsSettings.effectiveFpsLimit(paced)==cap);
+  }
+  g.setEconomy(true);g.setFpsLimit(24);Intent pwr24=new Intent();g.attach(pwr24);
+  check(GraphicsSettings.effectiveFpsLimit(pwr24)==24);
+  g.setFpsLimit(45);Intent pwr45=new Intent();g.attach(pwr45);
+  check(GraphicsSettings.effectiveFpsLimit(pwr45)==30);
+  g.setEconomy(false);g.setFpsLimit(25);check(g.fpsLimit()==60);
   g.applyPreset(-1);check(g.activePreset()==-1); // Invalid preset leaves settings alone.
   g.reset();check(!g.ssa()&&g.renderArea()&&!g.sustained()&&g.mipDrop()==0);
+  check(g.ringBackoff()&&!g.relaxedFragment()&&!g.compactDxt1());
   check(!g.batch()&&g.videoMode()==0&&g.gpuTiming()==64);
   check(g.pipelineThreads()==-1&&!g.gpuStages());
   check(GraphicsSettings.summary(i).contains("requested_internal="));

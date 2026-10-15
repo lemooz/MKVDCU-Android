@@ -1,7 +1,10 @@
 #include "host_tweaks.h"
 #include "scene_resolution.h"
+#include "ring_wait_backoff.h"
 
 #include <algorithm>
+#include <chrono>
+#include <thread>
 
 #if defined(_WIN32)
 #ifndef NOMINMAX
@@ -14,6 +17,7 @@
 #include <rex/audio/downmix.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
+#include <rex/diagnostics/performance.h>
 
 REXCVAR_DEFINE_INT32(port_internal_resolution_percent, 100, "Port/Graphics",
                     "Guest backbuffer dimensions: 100=1280x720, 75=960x540, 50=640x360")
@@ -22,6 +26,21 @@ REXCVAR_DEFINE_INT32(port_internal_resolution_percent, 100, "Port/Graphics",
 REXCVAR_DEFINE_INT32(port_scene_resolution_percent, 100, "Port/Graphics",
                     "UE3 scene buffers: 100=1040x624, 75=780x468, 50=520x312 (experimental)")
     .range(50, 100).lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+REXCVAR_DEFINE_BOOL(port_gpu_ring_backoff, true, "Port/Power",
+                    "Sleep briefly only while MKVDCU's GPU command ring is full; no frame limiter")
+    .lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+extern "C" void mkvdcu_ring_wait_backoff(unsigned int read_pointer) {
+  if (!REXCVAR_GET(port_gpu_ring_backoff)) return;
+  thread_local ring_wait::Backoff backoff;
+  const auto now = std::chrono::steady_clock::now().time_since_epoch();
+  const auto us = std::chrono::duration_cast<std::chrono::microseconds>(now).count();
+  if (const auto delay = backoff.DelayMicroseconds(read_pointer, uint64_t(us))) {
+    rex::diagnostics::PerformanceScope timing(rex::diagnostics::PerformanceStage::GuestRingBackoffCpu);
+    std::this_thread::sleep_for(std::chrono::microseconds(delay));
+  }
+}
 
 namespace {
 uint32_t validated_scene_percent = 100;

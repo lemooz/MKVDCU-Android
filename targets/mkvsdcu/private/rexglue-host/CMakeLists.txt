@@ -54,6 +54,25 @@ if(ANDROID)
     set(_resolution_derived "${CMAKE_CURRENT_BINARY_DIR}/mkvsdcu_recomp_resolution.cpp")
     file(CONFIGURE OUTPUT "${_resolution_derived}" CONTENT "${_resolution_code}" @ONLY)
     set_source_files_properties("${_resolution_derived}" PROPERTIES COMPILE_OPTIONS "${REXGLUE_RECOMP_OPTIONS}")
+
+    # This label is reached only after 827F6160 proved the ring has no room.
+    # Keep the original watchdog, memory reads and completion predicate intact.
+    set(_ring_source "${CMAKE_CURRENT_SOURCE_DIR}/generated/default/mkvsdcu_recomp.157.cpp")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_ring_source}")
+    file(READ "${_ring_source}" _ring_code)
+    string(REPLACE "\r\n" "\n" _ring_code "${_ring_code}")
+    set(_ring_anchor "loc_827F6150:\n\t// addi r3,r1,80")
+    string(FIND "${_ring_code}" "${_ring_anchor}" _ring_offset)
+    if(_ring_offset EQUAL -1)
+        message(FATAL_ERROR "MKVDCU GPU ring wait anchor changed; inspect codegen")
+    endif()
+    string(REPLACE "${_ring_anchor}"
+        "loc_827F6150:\n\tmkvdcu_ring_wait_backoff(REX_LOAD_U32(REX_LOAD_U32(ctx.r31.u32 + 10896)));\n\t// addi r3,r1,80"
+        _ring_code "${_ring_code}")
+    set(_ring_code "extern \"C\" void mkvdcu_ring_wait_backoff(unsigned int);\n${_ring_code}")
+    set(_ring_derived "${CMAKE_CURRENT_BINARY_DIR}/mkvsdcu_recomp_ring_wait.cpp")
+    file(CONFIGURE OUTPUT "${_ring_derived}" CONTENT "${_ring_code}" @ONLY)
+    set_source_files_properties("${_ring_derived}" PROPERTIES COMPILE_OPTIONS "${REXGLUE_RECOMP_OPTIONS}")
 endif()
 
 set(MKVSDCU_SOURCES
@@ -90,6 +109,7 @@ rexglue_setup_target(${MKVSDCU_TARGET} GPU_PLUGINS xenos)
 if(ANDROID)
     get_target_property(_recomp_sources ${MKVSDCU_TARGET}_recomp SOURCES)
     list(TRANSFORM _recomp_sources REPLACE "(^|.*/)mkvsdcu_recomp\\.65\\.cpp$" "${_resolution_derived}")
+    list(TRANSFORM _recomp_sources REPLACE "(^|.*/)mkvsdcu_recomp\\.157\\.cpp$" "${_ring_derived}")
     set_property(TARGET ${MKVSDCU_TARGET}_recomp PROPERTY SOURCES "${_recomp_sources}")
 endif()
 

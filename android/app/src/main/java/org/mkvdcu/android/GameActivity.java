@@ -38,6 +38,7 @@ public class GameActivity extends SDLActivity {
     private android.view.View inGameMenuView;
     private final Handler healthHandler = new Handler(Looper.getMainLooper());
     private PerformanceOverlayView performanceOverlay;
+    private volatile String cpuPolicyStatus = "CPU: política ainda não informada";
     private boolean diagnostics;
     private boolean performanceCaptureEnabled;
     private int displayRateRequestHz;
@@ -231,9 +232,12 @@ public class GameActivity extends SDLActivity {
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
             setupInGameMenu();
             performanceOverlay = new PerformanceOverlayView(this);
+            performanceOverlay.setCpuPolicyStatus(cpuPolicyStatus);
+            performanceOverlay.setPresentationLimit(GraphicsSettings.effectiveFpsLimit(getIntent()));
             performanceOverlay.setSnapshotProvider(new PerformanceOverlayView.SnapshotProvider() {
                 @Override public String getPerformanceSnapshot() { return nativeReadPerformanceSnapshot(); }
                 @Override public String getHealthSnapshot() { return nativeReadHealthSnapshot(); }
+                @Override public long getPresentCount() { return DriverNative.presentCount(); }
                 @Override public String getDriverName() {
                     return DriverNative.identity();
                 }
@@ -449,7 +453,10 @@ public class GameActivity extends SDLActivity {
 
     @Override
     public void loadLibraries() {
-        Log.i(TAG, DriverNative.configureCpuLimit(GraphicsSettings.cores(getIntent()), GraphicsSettings.economy(getIntent())));
+        cpuPolicyStatus = DriverNative.configureCpuLimit(GraphicsSettings.cores(getIntent()), GraphicsSettings.economy(getIntent()));
+        Log.i(TAG, cpuPolicyStatus);
+        if (performanceOverlay != null) performanceOverlay.setCpuPolicyStatus(cpuPolicyStatus);
+            performanceOverlay.setPresentationLimit(GraphicsSettings.effectiveFpsLimit(getIntent()));
         DriverStore.Driver driver = new DriverStore(this).get(getIntent().getStringExtra("driver_id"));
         driver.turnipMode = driver.kind.equals("turnip") ? GraphicsSettings.turnipMode(getIntent()) : 0;
                 driver.panvkLateStencil = driver.kind.equals("panvk") && GraphicsSettings.panvkLateStencil(getIntent());

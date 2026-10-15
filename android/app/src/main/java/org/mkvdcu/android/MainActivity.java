@@ -320,10 +320,13 @@ public class MainActivity extends Activity {
             "Núcleos do processo do jogo: " + (graphics.cores()==0 ? "automático" : "até " + graphics.cores()),
             "Economia de energia (PWR): " + (graphics.economy() ? "ativada" : "desativada"),
             "RAM — cache compacto: " + (graphics.compactMemory() ? "ativado" : "desativado"),
-            "Taxa solicitada à tela: " + (graphics.fpsLimit()==0 ? "automática" : graphics.fpsLimit() + " Hz"),
+            "Limite de FPS de saída: " + (graphics.fpsLimit()==0 ? "sem limite" : graphics.fpsLimit() + " FPS"),
             "Fila de apresentação separada: " + (graphics.presentQueue() ? "ativada" : "desativada"),
             "Área de transferências EDRAM/Resolve: " + (graphics.transferArea() ? "limitada" : "completa"),
-            "Frame generation experimental 2×: " + (graphics.frameGeneration() ? "ativada" : "desativada")};
+            "Frame generation experimental 2×: " + (graphics.frameGeneration() ? "ativada" : "desativada"),
+            "Espera econômica do ring GPU: " + (graphics.ringBackoff() ? "ativada" : "desativada"),
+            "Precisão reduzida em cores experimental: " + (graphics.relaxedFragment() ? "ativada" : "desativada"),
+            "Texturas DXT1 em 16 bits experimental: " + (graphics.compactDxt1() ? "ativadas" : "desativadas")};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) showPresetDialog();
@@ -414,14 +417,18 @@ public class MainActivity extends Activity {
                         }).setNegativeButton("Cancelar", null).show();
                 }
                 if (which == 16) {
-                    String[] names=new String[GraphicsSettings.CORE_COUNTS.length];int selected=0;
-                    for(int i=0;i<names.length;i++){ int n=GraphicsSettings.CORE_COUNTS[i];names[i]=n==0 ? "Automático — Android decide" : "Até "+n+" núcleo(s)";if(n==graphics.cores())selected=i; }
+                    int[] counts=GraphicsSettings.coreCounts(this);String[] names=new String[counts.length];int selected=0;
+                    for(int i=0;i<names.length;i++){ int n=counts[i];names[i]=n==0 ? "Automático — Android decide" : "Limitar a "+n+" núcleo(s)";if(n==graphics.cores())selected=i; }
+                    if (selected == 0 && graphics.cores() != 0) {
+                        for(int i=1;i<counts.length;i++)if(counts[i] >= graphics.cores()) { selected=i; break; }
+                    }
                     new AlertDialog.Builder(this).setTitle("Núcleos — próxima sessão")
-                        .setSingleChoiceItems(names,selected,(d,w)->{graphics.setCores(GraphicsSettings.CORE_COUNTS[w]);d.dismiss();showGraphicsSettings();})
+                        .setMessage("Aplica afinidade ao processo do jogo e às threads nativas, escolhendo CPUs disponíveis no Android. A opção limita CPUs elegíveis; não reduz diretamente a frequência nem garante menor temperatura. Com PWR ativo, CPUs de menor capacidade são priorizadas quando o kernel expõe essa informação; caso contrário, o Android mantém seu escalonamento automático.")
+                        .setSingleChoiceItems(names,selected,(d,w)->{graphics.setCores(counts[w]);d.dismiss();showGraphicsSettings();})
                         .setNegativeButton("Cancelar",null).show();
                 }
                 if (which == 17) new AlertDialog.Builder(this).setTitle("Economia de energia")
-                    .setMessage("Solicita atualização de tela a 30 Hz e usa até dois compiladores automáticos. No Android isso é apenas um pedido à Surface: o jogo não recebe pausa para limitar seus swaps, então esta opção não causa slow motion. Pode reduzir consumo da tela; não garante economia na GPU nem acelera uma cena lenta. O Android escolhe os núcleos por padrão; afinidade manual é separada e pode reduzir desempenho.")
+                    .setMessage("Limita a saída a no máximo 30 FPS e usa até dois compiladores automáticos. Mantém 24 FPS se selecionado. A simulação não recebe pausas no XE_SWAP. Pode reduzir trabalho de apresentação; não limita todo o trabalho da GPU nem acelera uma cena lenta. O Android escolhe os núcleos por padrão; afinidade manual é separada e pode reduzir desempenho.")
                     .setPositiveButton(graphics.economy() ? "Desativar" : "Ativar",(d,w)->{graphics.setEconomy(!graphics.economy());showGraphicsSettings();})
                     .setNegativeButton("Cancelar",null).show();
                 if (which == 18) new AlertDialog.Builder(this).setTitle("Cache compacto — próxima sessão")
@@ -430,8 +437,9 @@ public class MainActivity extends Activity {
                     .setNegativeButton("Cancelar",null).show();
                 if (which == 19) {
                     int selected=0;for(int i=0;i<GraphicsSettings.FPS_LIMITS.length;i++)if(GraphicsSettings.FPS_LIMITS[i]==graphics.fpsLimit())selected=i;
-                    new AlertDialog.Builder(this).setTitle("Taxa desejada da tela — próxima sessão")
-                        .setSingleChoiceItems(new String[]{"Automática (avançado)", "30 Hz", "45 Hz", "60 Hz", "90 Hz", "120 Hz"},selected,(d,w)->{graphics.setFpsLimit(GraphicsSettings.FPS_LIMITS[w]);d.dismiss();showGraphicsSettings();})
+                    new AlertDialog.Builder(this).setTitle("Limite de FPS de saída — próxima sessão")
+                        .setMessage("Limita as apresentações finais, incluindo frames gerados, sem pausar a simulação ou os swaps do jogo. O HUD separa FPS do jogo e de saída. Não aumenta FPS de cenas lentas nem limita todo o trabalho da GPU. PWR reduz opções acima de 30 para 30 FPS. Reinicie o jogo após alterar.")
+                        .setSingleChoiceItems(new String[]{"Sem limite (avançado)", "24 FPS", "30 FPS", "45 FPS", "60 FPS", "90 FPS", "120 FPS"},selected,(d,w)->{graphics.setFpsLimit(GraphicsSettings.FPS_LIMITS[w]);d.dismiss();showGraphicsSettings();})
                         .setNegativeButton("Cancelar",null).show();
                 }
                 if (which == 20) new AlertDialog.Builder(this).setTitle("Fila de apresentação — experimental")
@@ -452,6 +460,18 @@ public class MainActivity extends Activity {
                         .setPositiveButton(enabled ? "Desativar" : "Ativar 2×",(d,w)->{graphics.setFrameGeneration(!enabled);showGraphicsSettings();})
                         .setNegativeButton("Cancelar",null).show();
                 }
+                if (which == 23) new AlertDialog.Builder(this).setTitle("Espera econômica do ring GPU")
+                    .setMessage("Quando a GPU não libera espaço no ring, o thread do jogo espera de 50 a 400 µs após 16 consultas sem progresso. O atraso é reiniciado quando a GPU avança. Preserva os comandos e o watchdog do jogo; não limita XE_SWAP nem a simulação. Pode reduzir CPU e aquecimento; o resultado depende do aparelho. Exige nova sessão.")
+                    .setPositiveButton(graphics.ringBackoff() ? "Desativar para comparar" : "Ativar",(d,w)->{graphics.setRingBackoff(!graphics.ringBackoff());showGraphicsSettings();})
+                    .setNegativeButton("Cancelar",null).show();
+                if (which == 24) new AlertDialog.Builder(this).setTitle("Precisão reduzida — experimental")
+                    .setMessage("Permite RelaxedPrecision em operações saturadas do pixel shader. Mantém vértices, depth, exports de memória e constantes em precisão original. O driver pode usar FP16 ou manter FP32; ganho não é garantido e cores podem mudar. Usa cache próprio para evitar misturar shaders de precisão diferente. Padrão desativado. Exige nova sessão.")
+                    .setPositiveButton(graphics.relaxedFragment() ? "Desativar" : "Ativar para comparar",(d,w)->{graphics.setRelaxedFragment(!graphics.relaxedFragment());showGraphicsSettings();})
+                    .setNegativeButton("Cancelar",null).show();
+                if (which == 25) new AlertDialog.Builder(this).setTitle("Texturas DXT1 em 16 bits — experimental")
+                    .setMessage("Em GPUs sem BC1 nativo, decodifica DXT1 para RGB5A1: 2 bytes por texel em vez de 4. Preserva a máscara de transparência de 1 bit, reduz precisão RGB e pode causar banding. DXT3/DXT5, texturas nativas BC1 e memória guest permanecem no formato original. Usa RGBA8 se o formato compacto não for suportado. Padrão desativado. Exige nova sessão.")
+                    .setPositiveButton(graphics.compactDxt1() ? "Desativar" : "Ativar para comparar",(d,w)->{graphics.setCompactDxt1(!graphics.compactDxt1());showGraphicsSettings();})
+                    .setNegativeButton("Cancelar",null).show();
                 if (which == 15) new AlertDialog.Builder(this).setTitle("PanVK — próxima sessão")
                     .setMessage("Opção PANVK_STENCIL_LATE do FristOneRR 2.0-rc1. Pode corrigir triângulos pretos/luz ausente, mas também reduzir FPS e escurecer a imagem. Padrão desativado. Exige verificar novamente o pacote. Não altera o driver do sistema nem Turnip.")
                     .setPositiveButton(graphics.panvkLateStencil() ? "Desativar" : "Ativar", (d, w) -> { graphics.setPanvkLateStencil(!graphics.panvkLateStencil()); showGraphicsSettings(); })
