@@ -130,7 +130,7 @@ public class GameActivity extends SDLActivity {
         // SDL may create the native surface while super.onCreate is running.
         // Set the display hint before that callback so it never observes the
         // Java default (0 = uncapped) for a session configured at 30/60 FPS.
-        displayRateRequestHz = GraphicsSettings.effectiveFpsLimit(getIntent());
+        displayRateRequestHz = GraphicsSettings.displayRateRequestHz(getIntent());
         super.onCreate(savedInstanceState);
         performanceCaptureEnabled = diagnostics || BuildConfig.DEBUG ||
             getIntent().getBooleanExtra("perf_overlay_enabled", new Prefs(this).isPerformanceOverlayEnabled());

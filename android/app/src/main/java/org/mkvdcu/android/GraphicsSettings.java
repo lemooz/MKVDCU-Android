@@ -63,6 +63,7 @@ final class GraphicsSettings {
             .putBoolean(PREFIX + "transfer_area", true)
             .putBoolean(PREFIX + "economy", false)
             .putBoolean(PREFIX + "compact_memory", false)
+            .putBoolean(PREFIX + "frame_generation", false)
             .putInt(PREFIX + "fps_limit", low ? 30 : 60)
             .putInt(PREFIX + "pipeline_threads", -1)
             .putInt(PREFIX + "video_mode", 0)
@@ -82,12 +83,19 @@ final class GraphicsSettings {
     void setCompactMemory(boolean value) { editCustom().putBoolean(PREFIX + "compact_memory", value).apply(); }
     int fpsLimit() { return allowed(prefs.getInt(PREFIX + "fps_limit", 60), FPS_LIMITS, 60); }
     void setFpsLimit(int value) { editCustom().putInt(PREFIX + "fps_limit", allowed(value, FPS_LIMITS, 60)).apply(); }
+    boolean frameGeneration() { return prefs.getBoolean(PREFIX + "frame_generation", false); }
+    void setFrameGeneration(boolean value) { editCustom().putBoolean(PREFIX + "frame_generation", value).apply(); }
     static int cores(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "cpu_cores", 0), CORE_COUNTS, 0); }
     static boolean economy(Intent intent) { return intent.getBooleanExtra(PREFIX + "economy", false); }
     static int effectiveFpsLimit(Intent intent) {
         int limit = allowed(intent.getIntExtra(PREFIX + "fps_limit", 60), FPS_LIMITS, 60);
         return intent.getBooleanExtra(PREFIX + "economy", false)
             ? (limit == 0 ? 30 : Math.min(limit, 30)) : limit;
+    }
+    static int displayRateRequestHz(Intent intent) {
+        int source = effectiveFpsLimit(intent);
+        if (source <= 0) return 0;
+        return Math.min(240, source * (intent.getBooleanExtra(PREFIX + "frame_generation", false) ? 2 : 1));
     }
     static int scalePercent(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "scale_percent", 100), SCALES, 100); }
     static String scaleDescription(Intent intent) { int n=scalePercent(intent);return (1040*n/100)+"×"+(624*n/100)+" (cena "+(n/100f)+"× solicitada; saída 1280×720)"; }
@@ -129,6 +137,7 @@ final class GraphicsSettings {
             .remove(PREFIX + "batch").remove(PREFIX + "video_mode").remove(PREFIX + "gpu_timing").remove(PREFIX + "pipeline_threads")
             .remove(PREFIX + "gpu_stages").remove(PREFIX + "turnip_mode").remove(PREFIX + "panvk_late_stencil").remove(PREFIX + "scale_percent").remove(PREFIX + "cpu_cores")
             .remove(PREFIX + "economy").remove(PREFIX + "compact_memory").remove(PREFIX + "fps_limit")
+            .remove(PREFIX + "frame_generation")
             .remove(PREFIX + "active_preset").apply();
     }
     void attach(Intent intent) {
@@ -139,7 +148,8 @@ final class GraphicsSettings {
             .putExtra(PREFIX + "gpu_timing", gpuTiming()).putExtra(PREFIX + "gpu_stages", gpuStages())
             .putExtra(PREFIX + "pipeline_threads", pipelineThreads()).putExtra(PREFIX + "turnip_mode", turnipMode()).putExtra(PREFIX + "panvk_late_stencil", panvkLateStencil())
             .putExtra(PREFIX + "scale_percent", scalePercent()).putExtra(PREFIX + "cpu_cores", cores())
-            .putExtra(PREFIX + "economy", economy()).putExtra(PREFIX + "compact_memory", compactMemory()).putExtra(PREFIX + "fps_limit", fpsLimit());
+            .putExtra(PREFIX + "economy", economy()).putExtra(PREFIX + "compact_memory", compactMemory()).putExtra(PREFIX + "fps_limit", fpsLimit())
+            .putExtra(PREFIX + "frame_generation", frameGeneration());
     }
     static boolean sustained(Intent intent) { return intent.getBooleanExtra(PREFIX + "sustained", false); }
     static void appendArguments(Intent intent, List<String> args) {
@@ -150,6 +160,8 @@ final class GraphicsSettings {
         int limit = effectiveFpsLimit(intent);
         args.add("--vulkan_separate_present_queue=" + intent.getBooleanExtra(PREFIX + "present_queue", false));
         args.add("--gpu_frame_rate_limit=" + limit);
+        args.add("--gpu_frame_generation=" + intent.getBooleanExtra(PREFIX + "frame_generation", false));
+        args.add("--gpu_frame_generation_factor=2");
         args.add("--port_internal_resolution_percent=100");
         args.add("--port_scene_resolution_percent=" + scalePercent(intent));
         args.add("--texture_cache_memory_limit_soft_lifetime=" + (compact ? 5 : 30));
@@ -200,6 +212,7 @@ final class GraphicsSettings {
             "; gpu_stages=" + intent.getBooleanExtra(PREFIX + "gpu_stages", false) +
             "; pipeline_creation_threads_requested=" + allowed(intent.getIntExtra(PREFIX + "pipeline_threads", -1), PIPELINE_THREADS, -1) +
             "; pipeline_creation_threads_effective=" + effectivePipelineThreads(intent) +
+            "; frame_generation_2x=" + intent.getBooleanExtra(PREFIX + "frame_generation", false) +
             "; panvk_late_stencil=" + panvkLateStencil(intent) + "; turnip_mode=" + turnipMode(intent) + "; render_area_revision=deferred_union_1";
     }
     private static int allowed(int value, int[] choices, int fallback) {

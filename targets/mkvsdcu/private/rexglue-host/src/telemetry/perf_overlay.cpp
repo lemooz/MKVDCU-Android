@@ -9,6 +9,7 @@
 
 #include <imgui.h>
 #include <rex/cvar.h>
+#include <rex/diagnostics/performance.h>
 
 #include "host_tweaks.h"
 
@@ -41,6 +42,43 @@ double TargetFps(const telemetry::SystemSnapshot& system) {
 
 ImVec4 FpsColor(double fps, double target) {
   return fps >= target * 0.97 ? kGood : fps >= target * 0.8 ? kWarn : kBad;
+}
+
+void Heading(const char* text);
+
+void DrawGpuPipelineDiagnostics() {
+  Heading("GPU PIPELINE SAMPLES");
+  ImGui::Text("Counts since launch: submits=%llu passes=%llu resolves=%llu uploads=%llu",
+      static_cast<unsigned long long>(rex::diagnostics::ReadGraphicsMetric(
+          rex::diagnostics::GraphicsMetric::QueueSubmissions)),
+      static_cast<unsigned long long>(rex::diagnostics::ReadGraphicsMetric(
+          rex::diagnostics::GraphicsMetric::RenderPassBegins)),
+      static_cast<unsigned long long>(rex::diagnostics::ReadGraphicsMetric(
+          rex::diagnostics::GraphicsMetric::ResolveCommands)),
+      static_cast<unsigned long long>(rex::diagnostics::ReadGraphicsMetric(
+          rex::diagnostics::GraphicsMetric::TextureUploadsQueued)));
+  ImGui::Text("Texture cache since launch: hit=%llu miss=%llu evict=%llu guest-source=%.1f MiB",
+      static_cast<unsigned long long>(rex::diagnostics::ReadGraphicsMetric(
+          rex::diagnostics::GraphicsMetric::TextureCacheHits)),
+      static_cast<unsigned long long>(rex::diagnostics::ReadGraphicsMetric(
+          rex::diagnostics::GraphicsMetric::TextureCacheMisses)),
+      static_cast<unsigned long long>(rex::diagnostics::ReadGraphicsMetric(
+          rex::diagnostics::GraphicsMetric::TextureCacheEvictions)),
+      double(rex::diagnostics::ReadGraphicsMetric(
+          rex::diagnostics::GraphicsMetric::TextureUploadGuestBytes)) / (1024.0 * 1024.0));
+  const auto draw = rex::diagnostics::ReadPerformance(rex::diagnostics::PerformanceStage::GpuDraw);
+  const auto dump = rex::diagnostics::ReadPerformance(rex::diagnostics::PerformanceStage::GpuRtDump);
+  const auto resolve = rex::diagnostics::ReadPerformance(rex::diagnostics::PerformanceStage::GpuResolve);
+  const auto upload = rex::diagnostics::ReadPerformance(rex::diagnostics::PerformanceStage::GpuTextureUpload);
+  ImGui::Text("Sampled GPU ms/op: draw %.3f (%llu) dump %.3f (%llu) resolve %.3f (%llu) upload %.3f (%llu)",
+      draw.count ? double(draw.nanoseconds) / draw.count / 1e6 : 0.0,
+      static_cast<unsigned long long>(draw.count),
+      dump.count ? double(dump.nanoseconds) / dump.count / 1e6 : 0.0,
+      static_cast<unsigned long long>(dump.count),
+      resolve.count ? double(resolve.nanoseconds) / resolve.count / 1e6 : 0.0,
+      static_cast<unsigned long long>(resolve.count),
+      upload.count ? double(upload.nanoseconds) / upload.count / 1e6 : 0.0,
+      static_cast<unsigned long long>(upload.count));
 }
 
 ImVec4 LoadColor(double percent) {
@@ -382,6 +420,8 @@ void PerfOverlay::DrawDetailed(ImGuiIO& io, const telemetry::FrameStats& frames,
     Label("Page faults");
     ImGui::Text("%.0f / s", system.page_faults_per_second);
   }
+
+  DrawGpuPipelineDiagnostics();
 
   Heading("WHAT IS LIMITING IT");
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 400.0f);

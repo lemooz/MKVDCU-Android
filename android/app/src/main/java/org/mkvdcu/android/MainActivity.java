@@ -322,7 +322,8 @@ public class MainActivity extends Activity {
             "RAM — cache compacto: " + (graphics.compactMemory() ? "ativado" : "desativado"),
             "Taxa solicitada à tela: " + (graphics.fpsLimit()==0 ? "automática" : graphics.fpsLimit() + " Hz"),
             "Fila de apresentação separada: " + (graphics.presentQueue() ? "ativada" : "desativada"),
-            "Área de transferências EDRAM/Resolve: " + (graphics.transferArea() ? "limitada" : "completa")};
+            "Área de transferências EDRAM/Resolve: " + (graphics.transferArea() ? "limitada" : "completa"),
+            "Frame generation experimental 2×: " + (graphics.frameGeneration() ? "ativada" : "desativada")};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) showPresetDialog();
@@ -442,6 +443,13 @@ public class MainActivity extends Activity {
                     new AlertDialog.Builder(this).setTitle("Área de transferências EDRAM/Resolve")
                         .setMessage("Limita somente o render area dos passes de transferência e dos clears de resolve à união das regiões realmente calculadas, expandida para alinhamento. Não remove operações nem reduz a resolução. Esta opção é independente da área dos draws. O A/B anterior não isolou seu efeito; compare ligada/desligada na mesma arena antes de atribuir ganho ou manter alterações visuais.")
                         .setPositiveButton(enabled ? "Desativar para comparar" : "Ativar para comparar", (d,w)->{graphics.setTransferArea(!enabled);showGraphicsSettings();})
+                        .setNegativeButton("Cancelar",null).show();
+                }
+                if (which == 22) {
+                    boolean enabled=graphics.frameGeneration();
+                    new AlertDialog.Builder(this).setTitle("Frame generation Vulkan — experimental")
+                        .setMessage("Gera um frame interpolado por frame real (2×) para aumentar a cadência visual em aparelhos que já mantêm cerca de 30 FPS reais ou mais. Não acelera simulação, gameplay ou resposta do controle; pode aumentar latência, consumo e artefatos, e custa GPU. Em aparelhos lentos, deixe desativado. Requer nova sessão e suporte de formato Vulkan; se indisponível, o Presenter normal é usado.")
+                        .setPositiveButton(enabled ? "Desativar" : "Ativar 2×",(d,w)->{graphics.setFrameGeneration(!enabled);showGraphicsSettings();})
                         .setNegativeButton("Cancelar",null).show();
                 }
                 if (which == 15) new AlertDialog.Builder(this).setTitle("PanVK — próxima sessão")

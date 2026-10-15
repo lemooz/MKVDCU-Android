@@ -9,6 +9,8 @@ import android.graphics.RectF;
 import android.util.SparseArray;
 import android.view.MotionEvent;
 import android.view.View;
+import android.os.Handler;
+import android.os.Looper;
 
 /** Complete Xbox 360 touch surface; drawing and hit areas share one model. */
 final class VirtualGamepadView extends View {
@@ -22,6 +24,11 @@ final class VirtualGamepadView extends View {
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF rect=new RectF();
     private final SparseArray<Touch> touches=new SparseArray<>();
+    private final Handler macroHandler=new Handler(Looper.getMainLooper());
+    private int macroButtons,macroIndex,activeMacroControl=-1;
+    private GamepadLayout.Macro playingMacro;
+    private final Runnable macroPressNext=this::pressNextMacroStep;
+    private final Runnable macroReleaseStep=this::releaseMacroStep;
     private final StateSink sink;
     private final Runnable customize;
     private final Runnable onMenu;
@@ -48,7 +55,7 @@ final class VirtualGamepadView extends View {
     void replaceLayout(GamepadLayout value){releaseAll();layout=value;select(GamepadLayout.LEFT_STICK);constrain();}
     void reloadLayout(){if(!editor){releaseAll();layout=GamepadLayout.load(getContext());constrain();invalidate();}}
     void changed(){constrain();invalidate();}
-    void releaseAll(){touches.clear();dragPointer=-1;sink.send(0,0,0,0,0,0,0);invalidate();}
+    void releaseAll(){touches.clear();dragPointer=-1;cancelMacro();sink.send(0,0,0,0,0,0,0);invalidate();}
     private void constrain(){for(GamepadLayout.Control c:layout.controls)layout.constrain(c,getWidth(),getHeight());}
     @Override protected void onSizeChanged(int w,int h,int oldw,int oldh){super.onSizeChanged(w,h,oldw,oldh);releaseAll();constrain();}
     @Override protected void onDetachedFromWindow(){releaseAll();super.onDetachedFromWindow();}
@@ -121,7 +128,24 @@ final class VirtualGamepadView extends View {
     }
     private void ring(Canvas c,float x,float y,float r,int color,float stroke){ink(color);paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(stroke);c.drawCircle(x,y,r,paint);paint.setStyle(Paint.Style.FILL);}
     private void text(Canvas c,String text,float x,float y,float size,int color){ink(color);paint.setTextAlign(Paint.Align.CENTER);paint.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);paint.setTextSize(size);c.drawText(text,x,y-(paint.ascent()+paint.descent())*.5f,paint);}
-    private boolean pressed(int id){for(int i=0;i<touches.size();i++)if(touches.valueAt(i).control==id)return true;return false;}
+    private boolean pressed(int id){if(activeMacroControl==id)return true;for(int i=0;i<touches.size();i++)if(touches.valueAt(i).control==id)return true;return false;}
+    private void startMacro(int controlId,int macroId){
+        if(playingMacro!=null)return;GamepadLayout.Macro macro=layout.findMacro(macroId);if(macro==null||macro.steps.isEmpty())return;
+        playingMacro=macro;macroIndex=0;activeMacroControl=controlId;pressNextMacroStep();
+    }
+    private void pressNextMacroStep(){
+        if(playingMacro==null)return;
+        if(macroIndex>=playingMacro.steps.size()){finishMacro();return;}
+        GamepadLayout.MacroStep step=playingMacro.steps.get(macroIndex);macroButtons=step.buttons;sendState();
+        macroHandler.postDelayed(macroReleaseStep,step.holdMs);
+    }
+    private void releaseMacroStep(){
+        if(playingMacro==null)return;GamepadLayout.MacroStep step=playingMacro.steps.get(macroIndex++);macroButtons=0;sendState();
+        if(macroIndex>=playingMacro.steps.size()){finishMacro();return;}
+        macroHandler.postDelayed(macroPressNext,step.gapMs);
+    }
+    private void finishMacro(){playingMacro=null;macroButtons=0;activeMacroControl=-1;sendState();}
+    private void cancelMacro(){macroHandler.removeCallbacks(macroPressNext);macroHandler.removeCallbacks(macroReleaseStep);playingMacro=null;macroButtons=0;activeMacroControl=-1;}
     private float[] axes(GamepadLayout.Control c,boolean deadzone){
         for(int i=0;i<touches.size();i++){Touch t=touches.valueAt(i);if(t.control!=c.id)continue;
             float x=(t.x-c.x*getWidth())/c.radius(GamepadLayout.unit(getWidth(),getHeight())),y=(c.y*getHeight()-t.y)/c.radius(GamepadLayout.unit(getWidth(),getHeight()));
@@ -154,6 +178,7 @@ final class VirtualGamepadView extends View {
             else if(pressed(c.id)){if(c.id==GamepadLayout.LEFT_TRIGGER)lt=255;else if(c.id==GamepadLayout.RIGHT_TRIGGER)rt=255;else buttons|=c.bit;}
         }
         if(layout.mirrorLeftDpad){if(lx<-.35f)buttons|=4;if(lx>.35f)buttons|=8;if(ly>.35f)buttons|=1;if(ly<-.35f)buttons|=2;}
+        buttons|=macroButtons;
         sink.send(buttons,Math.round(lx*32767),Math.round(ly*32767),Math.round(rx*32767),Math.round(ry*32767),lt,rt);invalidate();
     }
     @Override public boolean onTouchEvent(MotionEvent event){
@@ -168,7 +193,9 @@ final class VirtualGamepadView extends View {
             if(control==NONE)return editor || touches.size()>0;
             if(editor){if(dragPointer!=-1)return true;select(control);dragPointer=id;GamepadLayout.Control c=selection();dragDx=event.getX(index)-c.x*getWidth();dragDy=event.getY(index)-c.y*getHeight();return true;}
             GamepadLayout.Control c=layout.find(control);if(c.kind==GamepadLayout.STICK && pressed(control))return true;
-            touches.put(id,new Touch(control,event.getX(index),event.getY(index)));sendState();return true;
+            touches.put(id,new Touch(control,event.getX(index),event.getY(index)));
+            GamepadLayout.Control selected=layout.find(control);if(selected!=null&&selected.kind==GamepadLayout.MACRO)startMacro(selected.id,selected.macroId);
+            sendState();return true;
         }
         if(action==MotionEvent.ACTION_MOVE){
             if(editor){int slot=event.findPointerIndex(dragPointer);GamepadLayout.Control c=selection();if(slot>=0 && c!=null){c.x=(event.getX(slot)-dragDx)/getWidth();c.y=(event.getY(slot)-dragDy)/getHeight();layout.constrain(c,getWidth(),getHeight());invalidate();}return true;}
