@@ -61,3 +61,4 @@ __pycache__/
 
 # Local publishing guide (never upload)
 /SUBIR_GITHUB_LOCAL.md
+/docs/RELEASE_CHANGELOG_TEMPLATE.local.md
