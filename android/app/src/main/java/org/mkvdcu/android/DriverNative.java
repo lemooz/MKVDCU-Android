@@ -23,6 +23,7 @@ final class DriverNative {
     static native void armCapture();
     static native void armRenderExtentProbe();
     static native void setRenderAreaBenchmark(boolean enabled);
+    static native void setTransferAreaBenchmark(boolean enabled);
     static native void setPresentPreWaitBenchmark(boolean enabled);
     static native void setPresentQueueBenchmark(boolean enabled);
 

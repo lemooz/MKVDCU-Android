@@ -72,3 +72,9 @@ Includes cumulative renderer, HUD, ISO descriptor lifetime and experimental PanV
 Both real ARM64 APK variants passed provenance checks. The normal APK was installed on Samsung A54; live GitHub lookup and downgrade blocking were verified. A complete future-version in-app upgrade remains to be validated.
 
 Future releases must increment versionCode and attach each versioned APK plus a matching `<apk-name>.sha256` sidecar; the updater defaults to include prereleases. Keep the same signing key.
+
+## v0.1.6 prerelease
+
+versionName `0.1.6`, versionCode `7`. Since v0.1.5: scales actual UE3 scene buffers (1040×624 and alternate 1024×576) before resource initialization, with guarded XEX anchors and a host regression test; adds Low/Balanced/High graphics presets; adds independent bounded render-area handling and A/B diagnostics for transfers/resolves; separates Android display refresh requests from guest simulation pacing to avoid slow motion; initializes the Android Vulkan cache root; and updates the overlay, settings checks, and ARM64 packaging path. Scene scaling remains experimental; no new physical Mali/Adreno performance result is claimed.
+
+The package has not yet received device validation. Attach the versioned Release APK and matching SHA-256 sidecar; diagnostic builds are not part of the standard prerelease.

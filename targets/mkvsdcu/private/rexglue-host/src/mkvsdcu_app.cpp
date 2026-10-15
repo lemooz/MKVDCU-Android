@@ -51,11 +51,22 @@ void MkvsdcuApp::OnConfigurePaths(rex::PathConfig& paths) {
   RepairPortConfig(paths.config_path);
   host_.config_path = paths.config_path;
   host_.log_dir = paths.user_data_root / "logs";
+  if (paths.cache_root.empty()) {
+    paths.cache_root = paths.user_data_root / "cache";
+  }
+  std::error_code ec;
+  std::filesystem::create_directories(paths.cache_root, ec);
 }
 
 // Developer aid: MKVDCU_DUMP_IMAGE=<file> writes the loaded XEX image so
 // indirect-call targets can be found offline (scripts/find-function-seeds.py).
 void MkvsdcuApp::OnPostLoadXexImage() {
+#if defined(__ANDROID__)
+  // Patch scene dimensions before the guest entry point and its static
+  // initializers copy them into the device/scene resource objects.
+  host_tweaks::ApplyGuestSceneResolution(
+      runtime()->memory()->virtual_membase() + REX_IMAGE_BASE, REX_IMAGE_SIZE);
+#endif
 #if defined(_WIN32)
   wchar_t path[MAX_PATH];
   if (!GetEnvironmentVariableW(L"MKVDCU_DUMP_IMAGE", path, MAX_PATH)) return;

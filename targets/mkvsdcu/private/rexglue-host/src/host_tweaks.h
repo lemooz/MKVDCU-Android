@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,6 +24,10 @@ std::vector<std::string> AvailableGpuBackends();
 // Resolve the port's render mode before the GPU plugin creates its caches.
 // "legacy" leaves the SDK's existing resolution_scale configuration intact.
 void ApplyRenderMode();
+
+// Before guest static initialization or resource allocation. Refuses an
+// unrecognized executable layout and leaves the native dimensions intact.
+void ApplyGuestSceneResolution(uint8_t* image, size_t image_size);
 
 // Effective X/Y factors, including an old SDK resolution_scale setting.
 std::pair<uint32_t, uint32_t> RenderScale();

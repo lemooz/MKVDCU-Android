@@ -58,3 +58,6 @@ __pycache__/
 !/docs/MODDING.md
 /research/
 /switch/toolchain-test
+
+# Local publishing guide (never upload)
+/SUBIR_GITHUB_LOCAL.md

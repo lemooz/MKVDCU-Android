@@ -225,10 +225,12 @@ public class MainActivity extends Activity {
     }
 
     private void showSettings() {
+        GraphicsSettings graphics = new GraphicsSettings(this);
         String[] items = {"Drivers Vulkan", "Importar driver ZIP / .adpkg.zip",
                 "Overlay de desempenho (MangoHUD): " + (prefs.isPerformanceOverlayEnabled() ? "ativado" : "desativado"),
                 "Diagnóstico nativo: " + (prefs.diagnostics() ? "ativado" : "desativado"),
-                "Gráficos e desempenho",
+                "★ Predefinição gráfica: " + graphics.presetName(),
+                "Gráficos e desempenho (avançado)",
                 "Exportar métricas da última sessão", "Exportar frametimes da última sessão", "Controle na tela — personalizar", "Atualizações pelo GitHub"};
         new AlertDialog.Builder(this)
                 .setTitle("Configurações")
@@ -244,18 +246,51 @@ public class MainActivity extends Activity {
                         showSettings();
                     }
                     if (which == 3) { prefs.setDiagnostics(!prefs.diagnostics()); showSettings(); }
-                    if (which == 4) showGraphicsSettings();
-                    if (which == 8) startActivity(new Intent(this, UpdateActivity.class));
-                    if (which == 7) startActivity(new Intent(this,GamepadEditorActivity.class));
-                    if (which == 5 || which == 6) {
+                    if (which == 4) showPresetDialog();
+                    if (which == 5) showGraphicsSettings();
+                    if (which == 9) startActivity(new Intent(this, UpdateActivity.class));
+                    if (which == 8) startActivity(new Intent(this, GamepadEditorActivity.class));
+                    if (which == 6 || which == 7) {
                         Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/csv")
                                 .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,
-                                    which == 6 ? "mkvdcu-frame-times.csv" : "mkvdcu-performance.csv");
-                        startActivityForResult(save, which == 6 ? REQ_EXPORT_FRAMES : REQ_EXPORT_PERFORMANCE);
+                                    which == 7 ? "mkvdcu-frame-times.csv" : "mkvdcu-performance.csv");
+                        startActivityForResult(save, which == 7 ? REQ_EXPORT_FRAMES : REQ_EXPORT_PERFORMANCE);
                     }
                 })
                 .setPositiveButton("Fechar", null)
                 .show();
+    }
+
+    private void showPresetDialog() {
+        GraphicsSettings graphics = new GraphicsSettings(this);
+        android.widget.LinearLayout content = new android.widget.LinearLayout(this);
+        content.setOrientation(android.widget.LinearLayout.VERTICAL);
+        int padding = Math.round(20 * getResources().getDisplayMetrics().density);
+        content.setPadding(padding, padding / 2, padding, padding / 2);
+        android.widget.ScrollView scroll = new android.widget.ScrollView(this);
+        scroll.addView(content);
+        AlertDialog picker = new AlertDialog.Builder(this)
+            .setTitle("Predefinições gráficas — próxima sessão")
+            .setView(scroll).setNegativeButton("Fechar", null).create();
+        for (int i = 0; i < GraphicsSettings.PRESET_NAMES.length; i++) {
+            final int preset = i;
+            android.widget.Button button = new android.widget.Button(this);
+            button.setAllCaps(false);
+            button.setText(GraphicsSettings.PRESET_NAMES[i]);
+            button.setOnClickListener(v -> {
+                graphics.applyPreset(preset);
+                picker.dismiss();
+                Toast.makeText(this, "Perfil aplicado. Inicie uma nova sessão.", Toast.LENGTH_SHORT).show();
+                showGraphicsSettings();
+            });
+            content.addView(button);
+            TextView description = new TextView(this);
+            description.setText(GraphicsSettings.PRESET_DESCRIPTIONS[i]);
+            description.setTextSize(13);
+            description.setPadding(0, 0, 0, padding);
+            content.addView(description);
+        }
+        picker.show();
     }
 
     private void showGraphicsSettings() {
@@ -265,7 +300,9 @@ public class MainActivity extends Activity {
             if (GraphicsSettings.FILTERS[i] == graphics.filter()) filterIndex = i;
         int scaleIndex = 0;
         for (int i=0;i<GraphicsSettings.SCALES.length;i++) if (GraphicsSettings.SCALES[i]==graphics.scalePercent()) scaleIndex=i;
-        String[] items = {"Resolução interna: " + GraphicsSettings.SCALE_NAMES[scaleIndex],
+        String[] items = {
+            "★ PREDEFINIÇÃO: " + graphics.presetName(),
+            "Resolução da cena: " + GraphicsSettings.SCALE_NAMES[scaleIndex],
             "Filtragem anisotrópica: " + GraphicsSettings.FILTER_NAMES[filterIndex],
             "Cache de texturas: " + graphics.cacheMb() + " MiB",
             "SPIR-V SSA experimental: " + (graphics.ssa() ? "ativado" : "desativado"),
@@ -283,17 +320,19 @@ public class MainActivity extends Activity {
             "Núcleos do processo do jogo: " + (graphics.cores()==0 ? "automático" : "até " + graphics.cores()),
             "Economia de energia (PWR): " + (graphics.economy() ? "ativada" : "desativada"),
             "RAM — cache compacto: " + (graphics.compactMemory() ? "ativado" : "desativado"),
-            "Limite de FPS: " + (graphics.fpsLimit()==0 ? "sem limite adicional" : graphics.fpsLimit()),
-            "Fila de apresentação separada: " + (graphics.presentQueue() ? "ativada" : "desativada")};
+            "Taxa solicitada à tela: " + (graphics.fpsLimit()==0 ? "automática" : graphics.fpsLimit() + " Hz"),
+            "Fila de apresentação separada: " + (graphics.presentQueue() ? "ativada" : "desativada"),
+            "Área de transferências EDRAM/Resolve: " + (graphics.transferArea() ? "limitada" : "completa")};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
-                if (which == 0) {
+                if (which == 0) showPresetDialog();
+                if (which == 1) {
                     int selected=0; for(int i=0;i<GraphicsSettings.SCALES.length;i++) if(GraphicsSettings.SCALES[i]==graphics.scalePercent()) selected=i;
-                    new AlertDialog.Builder(this).setTitle("Backbuffer — escala experimental")
+                    new AlertDialog.Builder(this).setTitle("Cena UE3 — escala experimental")
                         .setSingleChoiceItems(GraphicsSettings.SCALE_NAMES, selected, (d,w)->{ graphics.setScalePercent(GraphicsSettings.SCALES[w]); d.dismiss(); showGraphicsSettings(); })
                         .setNegativeButton("Cancelar",null).show();
                 }
-                if (which == 1) {
+                if (which == 2) {
                     int selected = 0;
                     for (int i = 0; i < GraphicsSettings.FILTERS.length; i++)
                         if (GraphicsSettings.FILTERS[i] == graphics.filter()) selected = i;
@@ -302,7 +341,7 @@ public class MainActivity extends Activity {
                             graphics.setFilter(GraphicsSettings.FILTERS[w]); d.dismiss(); showGraphicsSettings();
                         }).setNegativeButton("Cancelar", null).show();
                 }
-                if (which == 2) {
+                if (which == 3) {
                     String[] labels = new String[GraphicsSettings.CACHE_MB.length]; int selected = 0;
                     for (int i = 0; i < labels.length; i++) {
                         labels[i] = GraphicsSettings.CACHE_MB[i] + " MiB";
@@ -313,26 +352,26 @@ public class MainActivity extends Activity {
                             graphics.setCacheMb(GraphicsSettings.CACHE_MB[w]); d.dismiss(); showGraphicsSettings();
                         }).setNegativeButton("Cancelar", null).show();
                 }
-                if (which == 3 || which == 4) {
-                    boolean currently = which == 3 ? graphics.ssa() : graphics.renderArea();
+                if (which == 4 || which == 5) {
+                    boolean currently = which == 4 ? graphics.ssa() : graphics.renderArea();
                     Runnable change = () -> {
-                        if (which == 3) graphics.setSsa(!currently); else graphics.setRenderArea(!currently);
+                        if (which == 4) graphics.setSsa(!currently); else graphics.setRenderArea(!currently);
                         showGraphicsSettings();
                     };
                     if (currently) change.run();
                     else new AlertDialog.Builder(this).setTitle("Opção experimental")
-                        .setMessage(which == 3 ? "Otimiza SPIR-V preservando a aritmética. Ainda não há ganho consistente medido na Mali. Requer nova sessão."
+                        .setMessage(which == 4 ? "Otimiza SPIR-V preservando a aritmética. Ainda não há ganho consistente medido na Mali. Requer nova sessão."
                             : "Une as áreas dos draws antes de enviá-los à GPU para reduzir LOAD/STORE. Padrão ativado: três pares A/B na Mali-G68 mediram 2,42 para 3,01 FPS nesta cena. Mantém draws e áreas de scissor; outras cenas e GPUs ainda precisam de validação. Desative para comparar defeitos gráficos.")
                         .setPositiveButton("Ativar", (d, w) -> change.run()).setNegativeButton("Cancelar", null).show();
                 }
-                if (which == 5) {
+                if (which == 6) {
                     android.os.PowerManager power = getSystemService(android.os.PowerManager.class);
                     if (power != null && power.isSustainedPerformanceModeSupported()) graphics.setSustained(!graphics.sustained());
                     else Toast.makeText(this, "Este Android não oferece desempenho sustentado", Toast.LENGTH_LONG).show();
                     showGraphicsSettings();
                 }
-                if (which == 6) { graphics.reset(); showGraphicsSettings(); }
-                if (which == 7) new AlertDialog.Builder(this).setTitle("Detalhe de texturas — próxima sessão")
+                if (which == 7) { graphics.reset(); showGraphicsSettings(); }
+                if (which == 8) new AlertDialog.Builder(this).setTitle("Detalhe de texturas — próxima sessão")
                     .setSingleChoiceItems(new String[]{"Original", "Mínimo mip +1 (menos detalhe)", "Mínimo mip +2 (menos detalhe)"}, graphics.mipDrop(), (d, w) -> {
                         Runnable change = () -> { graphics.setMipDrop(w); d.dismiss(); showGraphicsSettings(); };
                         if (w == 0) change.run();
@@ -340,17 +379,17 @@ public class MainActivity extends Activity {
                             .setMessage("Usa mipmaps menores de texturas DXT 2D com cadeia de mips e filtragem linear. Pode borrar materiais e máscaras. Não reduz a resolução interna nem o tamanho dos uploads. Ganho de FPS ainda precisa ser medido.")
                             .setPositiveButton("Aplicar", (confirm, button) -> change.run()).setNegativeButton("Cancelar", null).show();
                     }).setNegativeButton("Cancelar", null).show();
-                if (which == 8) new AlertDialog.Builder(this).setTitle("Escalas experimentais")
-                    .setMessage("0,75× solicita backbuffer 960×540; 0,5× solicita 640×360. Passes internos da UE3 podem continuar maiores: foram observados passes 1040×624 com swap 640×360. Portanto, não reduz toda a renderização nem garante mais FPS. Use 1× como referência de compatibilidade; restaure 1× se houver cortes, câmera ou interface incorretos. Reinicie após alterar.")
+                if (which == 9) new AlertDialog.Builder(this).setTitle("Escalas experimentais")
+                    .setMessage("0,5× solicita buffers de cena 520×312; 0,75× solicita 780×468. A saída permanece em 1280×720 para preservar a interface. A alteração atua na configuração dos buffers da UE3 antes de sua criação e também acompanha o modo alternativo 1024×576. A compatibilidade visual e o ganho de FPS precisam de validação no aparelho. Use 1× como referência se houver cortes, efeitos incorretos ou problemas de interface. Reinicie o jogo após alterar.")
                     .setPositiveButton("OK",null).show();
-                if (which == 9) {
+                if (which == 10) {
                     if (graphics.batch()) { graphics.setBatch(false); showGraphicsSettings(); }
                     else new AlertDialog.Builder(this).setTitle("Agrupar submissões")
                         .setMessage("Reduz submissões no fim de buffers PM4, mantendo envio nos swaps e esperas necessárias. Experimental: desative se houver parada ou diferença visual.")
                         .setPositiveButton("Ativar", (d, w) -> { graphics.setBatch(true); showGraphicsSettings(); })
                         .setNegativeButton("Cancelar", null).show();
                 }
-                if (which == 10) {
+                if (which == 11) {
                     int selected = 0;
                     for (int i = 0; i < GraphicsSettings.GPU_TIMING.length; i++)
                         if (GraphicsSettings.GPU_TIMING[i] == graphics.gpuTiming()) selected = i;
@@ -359,11 +398,11 @@ public class MainActivity extends Activity {
                             graphics.setGpuTiming(GraphicsSettings.GPU_TIMING[w]); d.dismiss(); showGraphicsSettings();
                         }).setNegativeButton("Cancelar", null).show();
                 }
-                if (which == 11) {
+                if (which == 12) {
                     graphics.setGpuStages(!graphics.gpuStages());
                     showGraphicsSettings();
                 }
-                if (which == 12) {
+                if (which == 13) {
                     int selected = 0;
                     for (int i = 0; i < GraphicsSettings.PIPELINE_THREADS.length; i++)
                         if (GraphicsSettings.PIPELINE_THREADS[i] == graphics.pipelineThreads()) selected = i;
@@ -373,36 +412,43 @@ public class MainActivity extends Activity {
                             graphics.setPipelineThreads(GraphicsSettings.PIPELINE_THREADS[w]); d.dismiss(); showGraphicsSettings();
                         }).setNegativeButton("Cancelar", null).show();
                 }
-                if (which == 15) {
+                if (which == 16) {
                     String[] names=new String[GraphicsSettings.CORE_COUNTS.length];int selected=0;
                     for(int i=0;i<names.length;i++){ int n=GraphicsSettings.CORE_COUNTS[i];names[i]=n==0 ? "Automático — Android decide" : "Até "+n+" núcleo(s)";if(n==graphics.cores())selected=i; }
                     new AlertDialog.Builder(this).setTitle("Núcleos — próxima sessão")
                         .setSingleChoiceItems(names,selected,(d,w)->{graphics.setCores(GraphicsSettings.CORE_COUNTS[w]);d.dismiss();showGraphicsSettings();})
                         .setNegativeButton("Cancelar",null).show();
                 }
-                if (which == 16) new AlertDialog.Builder(this).setTitle("Economia de energia")
-                    .setMessage("Limita swaps a 30 FPS e usa até dois compiladores automáticos. Se limitar núcleos, prioriza CPUs de menor capacidade quando o Android permite identificá-los. Não controla watts ou tensão. Menos núcleos podem piorar FPS e áudio; a afinidade abrange o processo do jogo, incluindo o driver. Requer nova sessão.")
+                if (which == 17) new AlertDialog.Builder(this).setTitle("Economia de energia")
+                    .setMessage("Solicita atualização de tela a 30 Hz e usa até dois compiladores automáticos. No Android isso é apenas um pedido à Surface: o jogo não recebe pausa para limitar seus swaps, então esta opção não causa slow motion. Pode reduzir consumo da tela; não garante economia na GPU nem acelera uma cena lenta. O Android escolhe os núcleos por padrão; afinidade manual é separada e pode reduzir desempenho.")
                     .setPositiveButton(graphics.economy() ? "Desativar" : "Ativar",(d,w)->{graphics.setEconomy(!graphics.economy());showGraphicsSettings();})
                     .setNegativeButton("Cancelar",null).show();
-                if (which == 17) new AlertDialog.Builder(this).setTitle("Cache compacto — próxima sessão")
+                if (which == 18) new AlertDialog.Builder(this).setTitle("Cache compacto — próxima sessão")
                     .setMessage("Limita o cache de texturas a no máximo 128 MiB suave / 256 MiB rígido e libera texturas antigas após 5 s quando o orçamento é excedido. Permite escolher 64 MiB no cache. Pode aumentar recargas e travadinhas. Não é um limite da RAM total: memória guest, áudio, drivers e render targets continuam necessários.")
                     .setPositiveButton(graphics.compactMemory() ? "Desativar" : "Ativar",(d,w)->{graphics.setCompactMemory(!graphics.compactMemory());showGraphicsSettings();})
                     .setNegativeButton("Cancelar",null).show();
-                if (which == 18) {
+                if (which == 19) {
                     int selected=0;for(int i=0;i<GraphicsSettings.FPS_LIMITS.length;i++)if(GraphicsSettings.FPS_LIMITS[i]==graphics.fpsLimit())selected=i;
-                    new AlertDialog.Builder(this).setTitle("Limite de FPS — próxima sessão")
-                        .setSingleChoiceItems(new String[]{"Sem limite adicional", "30 FPS", "60 FPS"},selected,(d,w)->{graphics.setFpsLimit(GraphicsSettings.FPS_LIMITS[w]);d.dismiss();showGraphicsSettings();})
+                    new AlertDialog.Builder(this).setTitle("Taxa desejada da tela — próxima sessão")
+                        .setSingleChoiceItems(new String[]{"Automática (avançado)", "30 Hz", "45 Hz", "60 Hz", "90 Hz", "120 Hz"},selected,(d,w)->{graphics.setFpsLimit(GraphicsSettings.FPS_LIMITS[w]);d.dismiss();showGraphicsSettings();})
                         .setNegativeButton("Cancelar",null).show();
                 }
-                if (which == 19) new AlertDialog.Builder(this).setTitle("Fila de apresentação — experimental")
+                if (which == 20) new AlertDialog.Builder(this).setTitle("Fila de apresentação — experimental")
                     .setMessage("Usa a segunda fila da mesma família gráfica quando o driver realmente oferece duas. Pode reduzir a disputa entre Present e comandos do jogo. Drivers com uma fila mantêm o caminho original. Requer nova sessão; compare FPS e estabilidade antes de manter ativada.")
                     .setPositiveButton(graphics.presentQueue() ? "Desativar" : "Ativar", (d,w)->{graphics.setPresentQueue(!graphics.presentQueue());showGraphicsSettings();})
                     .setNegativeButton("Cancelar",null).show();
-                if (which == 14) new AlertDialog.Builder(this).setTitle("PanVK — próxima sessão")
+                if (which == 21) {
+                    boolean enabled = graphics.transferArea();
+                    new AlertDialog.Builder(this).setTitle("Área de transferências EDRAM/Resolve")
+                        .setMessage("Limita somente o render area dos passes de transferência e dos clears de resolve à união das regiões realmente calculadas, expandida para alinhamento. Não remove operações nem reduz a resolução. Esta opção é independente da área dos draws. O A/B anterior não isolou seu efeito; compare ligada/desligada na mesma arena antes de atribuir ganho ou manter alterações visuais.")
+                        .setPositiveButton(enabled ? "Desativar para comparar" : "Ativar para comparar", (d,w)->{graphics.setTransferArea(!enabled);showGraphicsSettings();})
+                        .setNegativeButton("Cancelar",null).show();
+                }
+                if (which == 15) new AlertDialog.Builder(this).setTitle("PanVK — próxima sessão")
                     .setMessage("Opção PANVK_STENCIL_LATE do FristOneRR 2.0-rc1. Pode corrigir triângulos pretos/luz ausente, mas também reduzir FPS e escurecer a imagem. Padrão desativado. Exige verificar novamente o pacote. Não altera o driver do sistema nem Turnip.")
                     .setPositiveButton(graphics.panvkLateStencil() ? "Desativar" : "Ativar", (d, w) -> { graphics.setPanvkLateStencil(!graphics.panvkLateStencil()); showGraphicsSettings(); })
                     .setNegativeButton("Cancelar", null).show();
-                if (which == 13) new AlertDialog.Builder(this).setTitle("Turnip — próxima sessão")
+                if (which == 14) new AlertDialog.Builder(this).setTitle("Turnip — próxima sessão")
                     .setMessage("Somente para driver Turnip importado. Automático mantém a escolha do driver; Sysmem evita o binning em tiles; GMEM força tiles. O melhor modo depende da GPU e da cena. Exige verificar novamente o pacote no gerenciador de drivers. Não afeta o driver do sistema nem PanVK.")
                     .setSingleChoiceItems(GraphicsSettings.TURNIP_MODES, graphics.turnipMode(), (d, w) -> {
                         graphics.setTurnipMode(w); d.dismiss(); showGraphicsSettings();

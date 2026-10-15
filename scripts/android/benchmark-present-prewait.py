@@ -5,7 +5,7 @@ p.add_argument('--output',type=pathlib.Path,required=True)
 p.add_argument('--seconds',type=int,default=20)
 p.add_argument('--pairs',type=int,default=3)
 p.add_argument('--scene',required=True)
-p.add_argument('--mode',choices=['prewait','queue'],default='prewait')
+p.add_argument('--mode',choices=['prewait','queue','transfer'],default='prewait')
 p.add_argument('--wait-fight',action='store_true')
 p.add_argument('--wait-draws-per-frame',type=int,default=0)
 a=p.parse_args();a.output.mkdir(parents=True,exist_ok=True)
@@ -32,7 +32,7 @@ if a.wait_draws_per_frame or a.wait_fight:
   if time.monotonic()>end:raise RuntimeError('Target scene not observed in 360s')
   time.sleep(3)
 results=[]
-action='org.mkvdcu.android.DEBUG_PRESENT_QUEUE' if a.mode=='queue' else 'org.mkvdcu.android.DEBUG_PRESENT_PREWAIT'
+action='org.mkvdcu.android.'+{'queue':'DEBUG_PRESENT_QUEUE','prewait':'DEBUG_PRESENT_PREWAIT','transfer':'DEBUG_TRANSFER_AREA'}[a.mode]
 try:
  for i,enabled in enumerate([False,True]*a.pairs):
   adb('shell','am','broadcast','-a',action,'-p','org.mkvdcu.android','--ez','enabled',str(enabled).lower())
@@ -48,7 +48,7 @@ try:
   if count<=0 or seconds<=0:raise RuntimeError('No frame progress')
   wait_count=metric(last,'present_ready_wait_cpu')[0]-metric(first,'present_ready_wait_cpu')[0]
   if a.mode=='prewait' and bool(wait_count)!=enabled:raise RuntimeError('Pre-wait override did not execute as requested')
-  column='present_queue_benchmark' if a.mode=='queue' else 'present_prewait_benchmark'
+  column={'queue':'present_queue_benchmark','prewait':'present_prewait_benchmark','transfer':'transfer_area_benchmark'}[a.mode]
   if column in last and int(last[column])!=int(enabled):raise RuntimeError('CSV override mismatch')
   vals=sorted(float(r['interval_ms']) for r in rows(frames) if int(first['guest_frames'])<int(r['frame_id'])<=int(last['guest_frames']))
   stages={}

@@ -1,4 +1,5 @@
 #include "host_tweaks.h"
+#include "scene_resolution.h"
 
 #include <algorithm>
 
@@ -15,8 +16,35 @@
 #include <rex/logging.h>
 
 REXCVAR_DEFINE_INT32(port_internal_resolution_percent, 100, "Port/Graphics",
-                    "MKVDCU guest render dimensions: 100=1280x720, 75=960x540, 50=640x360")
+                    "Guest backbuffer dimensions: 100=1280x720, 75=960x540, 50=640x360")
     .range(50, 100).lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+REXCVAR_DEFINE_INT32(port_scene_resolution_percent, 100, "Port/Graphics",
+                    "UE3 scene buffers: 100=1040x624, 75=780x468, 50=520x312 (experimental)")
+    .range(50, 100).lifecycle(rex::cvar::Lifecycle::kInitOnly);
+
+namespace {
+uint32_t validated_scene_percent = 100;
+}
+
+// The alternate device-initialization path replaces the scene globals with
+// 1024x576. Scale its original dimensions once, before they are published.
+extern "C" unsigned int mkvdcu_scale_scene_dimension(unsigned int native) {
+  return scene_resolution::Dimension(native, validated_scene_percent);
+}
+
+void host_tweaks::ApplyGuestSceneResolution(uint8_t* image, size_t image_size) {
+  const uint32_t percent = scene_resolution::Percent(REXCVAR_GET(port_scene_resolution_percent));
+  validated_scene_percent = 100;
+  if (!scene_resolution::Apply(image, image_size, percent)) {
+    REXLOG_ERROR("[SCENE_RESOLUTION] XEX anchors mismatch: keeping native scene; requested={}%", percent);
+    return;
+  }
+  validated_scene_percent = percent;
+  REXLOG_INFO("[SCENE_RESOLUTION] guest buffers 1040x624 -> {}x{} ({}%), globals=82F4D17C/180; alternate={}x{}",
+      scene_resolution::Dimension(1040, percent), scene_resolution::Dimension(624, percent), percent,
+      scene_resolution::Dimension(1024, percent), scene_resolution::Dimension(576, percent));
+}
 
 extern "C" unsigned int mkvdcu_internal_width() {
   const int requested = REXCVAR_GET(port_internal_resolution_percent);

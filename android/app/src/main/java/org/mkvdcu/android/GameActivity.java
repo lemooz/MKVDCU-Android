@@ -39,11 +39,14 @@ public class GameActivity extends SDLActivity {
     private final Handler healthHandler = new Handler(Looper.getMainLooper());
     private PerformanceOverlayView performanceOverlay;
     private boolean diagnostics;
+    private boolean performanceCaptureEnabled;
+    private int displayRateRequestHz;
     private java.io.BufferedWriter performanceLog;
     private java.io.BufferedWriter frameLog;
     private long frameCursor;
     private boolean startupReported;
     private int renderAreaBenchmark = -1;
+    private int transferAreaBenchmark = -1;
     private int presentQueueBenchmark = -1, presentPreWaitBenchmark = -1;
     private android.content.BroadcastReceiver benchmarkReceiver;
     private final Runnable performanceUpdate = new Runnable() {
@@ -61,7 +64,7 @@ public class GameActivity extends SDLActivity {
                             ? power.getCurrentThermalStatus() : -1;
                     String actualDriver = DriverNative.identity().replace("\"", "\"\"").replace('\n', ' ');
                     performanceLog.write(android.os.SystemClock.elapsedRealtime() + "," +
-                        snapshot + ",\"" + actualDriver + "\"," + thermal + "," + renderAreaBenchmark + "," + presentQueueBenchmark + "," + presentPreWaitBenchmark + "\n");
+                        snapshot + ",\"" + actualDriver + "\"," + thermal + "," + displayRateRequestHz + "," + renderAreaBenchmark + "," + presentQueueBenchmark + "," + presentPreWaitBenchmark + "," + transferAreaBenchmark + "\n");
                     performanceLog.flush();
                 }
                 if (frameLog != null) {
@@ -72,6 +75,7 @@ public class GameActivity extends SDLActivity {
                     frameLog.flush();
                 }
             } catch (java.io.IOException error) { Log.e(TAG, "Performance CSV", error); }
+            if (startupReported && performanceLog == null && frameLog == null) return;
             healthHandler.postDelayed(this, 1000);
         }
     };
@@ -95,14 +99,52 @@ public class GameActivity extends SDLActivity {
     }
 
     @Override
+    protected org.libsdl.app.SDLSurface createSDLSurface(android.content.Context context) {
+        return new org.libsdl.app.SDLSurface(context) {
+            @Override public void surfaceChanged(android.view.SurfaceHolder holder, int format, int width, int height) {
+                super.surfaceChanged(holder, format, width, height);
+                applySurfaceFrameRate(holder.getSurface());
+            }
+        };
+    }
+
+    private void applySurfaceFrameRate(android.view.Surface surface) {
+        if (android.os.Build.VERSION.SDK_INT < 31 || surface == null || !surface.isValid()) return;
+        try {
+            if (displayRateRequestHz > 0) {
+                surface.setFrameRate(displayRateRequestHz,
+                    android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                    android.view.Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS);
+            } else {
+                surface.clearFrameRate();
+            }
+        } catch (IllegalArgumentException | UnsupportedOperationException error) {
+            Log.w(TAG, "Display frame-rate hint unavailable", error);
+        }
+    }
+
+
+    @Override
     protected void onCreate(Bundle savedInstanceState) {
         diagnostics = getIntent().getBooleanExtra("diagnostics", BuildConfig.DIAGNOSTIC_DEFAULT);
+        // SDL may create the native surface while super.onCreate is running.
+        // Set the display hint before that callback so it never observes the
+        // Java default (0 = uncapped) for a session configured at 30/60 FPS.
+        displayRateRequestHz = GraphicsSettings.effectiveFpsLimit(getIntent());
         super.onCreate(savedInstanceState);
+        performanceCaptureEnabled = diagnostics || BuildConfig.DEBUG ||
+            getIntent().getBooleanExtra("perf_overlay_enabled", new Prefs(this).isPerformanceOverlayEnabled());
         // Only debuggable APKs expose the ADB benchmark control. The native
         // atomic is consumed on the GPU thread; Vulkan stays on that thread.
         if (BuildConfig.DEBUG) {
             benchmarkReceiver = new android.content.BroadcastReceiver() {
                 @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+                    if ((getPackageName() + ".DEBUG_TRANSFER_AREA").equals(intent.getAction())) {
+                        boolean enabled = intent.getBooleanExtra("enabled", false);
+                        transferAreaBenchmark = enabled ? 1 : 0;
+                        DriverNative.setTransferAreaBenchmark(enabled);
+                        return;
+                    }
                     if ((getPackageName() + ".DEBUG_RENDER_EXTENTS").equals(intent.getAction())) {
                         DriverNative.armRenderExtentProbe();
                         return;
@@ -145,6 +187,7 @@ public class GameActivity extends SDLActivity {
             filter.addAction(getPackageName() + ".DEBUG_FRAME_CAPTURE");
             filter.addAction(getPackageName() + ".DEBUG_CPU_PROFILE");
             filter.addAction(getPackageName() + ".DEBUG_RENDER_EXTENTS");
+            filter.addAction(getPackageName() + ".DEBUG_TRANSFER_AREA");
             filter.addAction(getPackageName() + ".DEBUG_PRESENT_PREWAIT");
             filter.addAction(getPackageName() + ".DEBUG_PRESENT_QUEUE");
             if (android.os.Build.VERSION.SDK_INT >= 33)
@@ -157,18 +200,20 @@ public class GameActivity extends SDLActivity {
         getWindow().setSustainedPerformanceMode(sustained);
         Log.i(TAG, "Graphics settings: " + GraphicsSettings.summary(getIntent()) + "; sustained_active=" + sustained);
         try {
-            performanceLog = new java.io.BufferedWriter(new java.io.FileWriter(
-                    new java.io.File(getFilesDir(), "last-performance.csv")));
+            if (performanceCaptureEnabled) {
+                performanceLog = new java.io.BufferedWriter(new java.io.FileWriter(
+                        new java.io.File(getFilesDir(), "last-performance.csv")));
+                frameLog = new java.io.BufferedWriter(new java.io.FileWriter(new java.io.File(getFilesDir(), "last-frame-times.csv")));
+            }
             String injectedLayers = androidInjectedGpuLayers();
             Log.i(TAG, "Performance environment: diagnostic=" + diagnostics + "; Android requested GPU layers=" + injectedLayers);
-            performanceLog.write("# driver=" + getIntent().getStringExtra("driver_id") + "; diagnostic=" + diagnostics +
+            if (performanceLog != null) performanceLog.write("# driver=" + getIntent().getStringExtra("driver_id") + "; diagnostic=" + diagnostics +
                     "; android_requested_gpu_layers=" + injectedLayers + "; spirv_ssa_override=" +
                     (getIntent().hasExtra("benchmark_spirv_optimize") ? getIntent().getBooleanExtra("benchmark_spirv_optimize", false) : "default") +
                     "; " + GraphicsSettings.summary(getIntent()) + "; sustained_active=" + sustained +
                     "; frame_probe_prepare=" + (diagnostics || BuildConfig.DEBUG) + "\n");
-            performanceLog.write("elapsed_ms,guest_frames,game_fps,avg_ms,median_ms,p95_ms,p99_ms,inclusive_stage_count_total_ms,actual_driver,thermal_status,render_area_benchmark,present_queue_benchmark,present_prewait_benchmark\n");
-            frameLog = new java.io.BufferedWriter(new java.io.FileWriter(new java.io.File(getFilesDir(), "last-frame-times.csv")));
-            frameLog.write("frame_id,interval_ms\n");
+            if (performanceLog != null) performanceLog.write("elapsed_ms,guest_frames,game_fps,avg_ms,median_ms,p95_ms,p99_ms,inclusive_stage_count_total_ms,actual_driver,thermal_status,display_rate_request_hz,render_area_benchmark,present_queue_benchmark,present_prewait_benchmark,transfer_area_benchmark\n");
+            if (frameLog != null) frameLog.write("frame_id,interval_ms\n");
         } catch (java.io.IOException error) { Log.e(TAG, "Performance CSV", error); }
         android.view.View content = SDLActivity.getContentView();
         if (content instanceof ViewGroup) {

@@ -4,6 +4,7 @@
 #include <chrono>
 #include <atomic>
 #include <thread>
+#include <string>
 #include <sstream>
 #include <rex/diagnostics/health.h>
 #include <rex/diagnostics/performance.h>

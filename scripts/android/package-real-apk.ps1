@@ -38,7 +38,7 @@ New-Item -ItemType Directory -Force -Path $licenses | Out-Null
 $loaderSource = Join-Path $gameBuild '_deps/adrenotools_source-src'
 Copy-Item -LiteralPath (Join-Path $loaderSource 'LICENSE') -Destination (Join-Path $licenses 'libadrenotools.txt') -Force
 Copy-Item -LiteralPath (Join-Path $loaderSource 'lib/linkernsbypass/LICENSE') -Destination (Join-Path $licenses 'liblinkernsbypass.txt') -Force
-Copy-Item -LiteralPath (Join-Path $workspace 'MKVDCU-Recomp/references/rexglue-sdk/thirdparty/spirv-tools/LICENSE') -Destination (Join-Path $licenses 'SPIRV-Tools.txt') -Force
+Copy-Item -LiteralPath (Join-Path $workspace 'references/rexglue-sdk/thirdparty/spirv-tools/LICENSE') -Destination (Join-Path $licenses 'SPIRV-Tools.txt') -Force
 New-Item -ItemType Directory -Force -Path $symbols,$staged | Out-Null
 foreach ($name in $libraries.Keys) {
     $source = $libraries[$name]

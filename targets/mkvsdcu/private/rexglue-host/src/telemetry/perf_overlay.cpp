@@ -241,7 +241,7 @@ void PerfOverlay::DrawCompact(const telemetry::FrameStats& frames,
     ImGui::TextColored(kLabel, "%ux%u swap", size.width, size.height);
 #if defined(__ANDROID__)
     ImGui::SameLine();
-    ImGui::TextColored(kLabel, "request %.2fx", rex::cvar::Query<int32_t>("port_internal_resolution_percent") / 100.0f);
+    ImGui::TextColored(kLabel, "scene req %.2fx", rex::cvar::Query<int32_t>("port_scene_resolution_percent") / 100.0f);
 #else
     ImGui::SameLine();
     ImGui::TextColored(kLabel, "%dx", ScaleSetting());
@@ -249,7 +249,7 @@ void PerfOverlay::DrawCompact(const telemetry::FrameStats& frames,
   }
   telemetry::RecentFrameTimes(frame_times_, 180);
 #if defined(__ANDROID__)
-  ImGui::Text("RAM RSS: %.0f MiB | texture budget: %d/%d MiB | cap: %d FPS",
+  ImGui::Text("RAM RSS: %.0f MiB | texture budget: %d/%d MiB | display request: %d Hz",
       system.working_set_bytes / 1048576.0,
       rex::cvar::Query<int32_t>("texture_cache_memory_limit_soft"),
       rex::cvar::Query<int32_t>("texture_cache_memory_limit_hard"),
@@ -310,9 +310,16 @@ void PerfOverlay::DrawDetailed(ImGuiIO& io, const telemetry::FrameStats& frames,
   } else {
     ImGui::TextColored(kLabel, "waiting for the first frame");
   }
+#if defined(__ANDROID__)
+  Label("Scene requested");
+  ImGui::Text("%.2fx guest scene buffers", rex::cvar::Query<int32_t>("port_scene_resolution_percent") / 100.0f);
+  Label("Backend scale");
+  ImGui::Text("%ux by %uy", scale_x, scale_y);
+#else
   Label("Internal render");
   ImGui::Text("%u x %u  (%ux by %uy)", size.width * scale_x, size.height * scale_y,
               scale_x, scale_y);
+#endif
   if (host_->window_info) {
     const PortWindowInfo window = host_->window_info();
     Label("Window");
@@ -320,7 +327,11 @@ void PerfOverlay::DrawDetailed(ImGuiIO& io, const telemetry::FrameStats& frames,
                 window.fullscreen ? "borderless fullscreen" : "windowed");
     if (size.height && window.height) {
       Label("Presented at");
+#if defined(__ANDROID__)
+      ImGui::Text("%.2fx the output height", double(window.height) / (size.height * scale_y));
+#else
       ImGui::Text("%.2fx the internal height", double(window.height) / (size.height * scale_y));
+#endif
     }
   }
 

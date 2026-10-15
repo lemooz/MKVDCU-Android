@@ -38,9 +38,19 @@ if(ANDROID)
         message(FATAL_ERROR "MKVDCU HD resolution anchor changed; inspect codegen before building")
     endif()
     string(REPLACE "${_resolution_original}"
-        "loc_825F55BC:\n\tctx.r30.s64 = mkvdcu_internal_width();\n\tctx.r26.s64 = mkvdcu_internal_height();"
+        "loc_825F55BC:\n\tctx.r30.s64 = mkvdcu_internal_width();\n\tctx.r26.s64 = mkvdcu_internal_height();\n\tREX_STORE_U32(0x82FC4D48, ctx.r30.u32);\n\tREX_STORE_U32(0x82FC4D4C, ctx.r26.u32);"
         _resolution_code "${_resolution_code}")
-    set(_resolution_code "extern \"C\" unsigned int mkvdcu_internal_width();\nextern \"C\" unsigned int mkvdcu_internal_height();\n${_resolution_code}")
+    # The alternate scene mode overwrites 82F4D17C/180 with 1024x576. Keep
+    # resource creation and later viewport/copy consumers on the same scale.
+    set(_scene_original "\t// li r11,1024\n\tctx.r11.s64 = 1024;\n\t// li r10,576\n\tctx.r10.s64 = 576;\n\t// stw r11,-11908(r8)")
+    string(FIND "${_resolution_code}" "${_scene_original}" _scene_offset)
+    if(_scene_offset EQUAL -1)
+        message(FATAL_ERROR "MKVDCU alternate scene resolution anchor changed; inspect codegen")
+    endif()
+    string(REPLACE "${_scene_original}"
+        "\tctx.r11.u64 = mkvdcu_scale_scene_dimension(1024);\n\tctx.r10.u64 = mkvdcu_scale_scene_dimension(576);\n\t// stw r11,-11908(r8)"
+        _resolution_code "${_resolution_code}")
+    set(_resolution_code "extern \"C\" unsigned int mkvdcu_internal_width();\nextern \"C\" unsigned int mkvdcu_internal_height();\nextern \"C\" unsigned int mkvdcu_scale_scene_dimension(unsigned int);\n${_resolution_code}")
     set(_resolution_derived "${CMAKE_CURRENT_BINARY_DIR}/mkvsdcu_recomp_resolution.cpp")
     file(CONFIGURE OUTPUT "${_resolution_derived}" CONTENT "${_resolution_code}" @ONLY)
     set_source_files_properties("${_resolution_derived}" PROPERTIES COMPILE_OPTIONS "${REXGLUE_RECOMP_OPTIONS}")

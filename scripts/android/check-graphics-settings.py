@@ -3,7 +3,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-root = Path(__file__).resolve().parent.parent
+root = Path(__file__).resolve().parents[2]
 jdk = Path('C:/Program Files/Android/Android Studio/jbr/bin')
 sources = {
 'android/content/SharedPreferences.java': '''package android.content;
@@ -40,12 +40,12 @@ public class Intent {
 import android.content.*; import java.util.*;
 public class GraphicsHarness {
  static List<String> args(Intent i){List<String> a=new ArrayList<>();GraphicsSettings.appendArguments(i,a);return a;}
- static void check(boolean b){if(!b)throw new AssertionError();}
+ static int checks; static void check(boolean b){checks++;if(!b)throw new AssertionError("graphics settings check "+checks);}
  public static void main(String[] unused){
   GraphicsSettings g=new GraphicsSettings(new Context()); Intent i=new Intent();g.attach(i);
   check(args(i).contains("--anisotropic_override=-1"));check(args(i).contains("--texture_cache_memory_limit_hard=768"));
   check(args(i).contains("--vulkan_gpu_timing_interval=64"));
-  check(args(i).contains("--vulkan_pipeline_creation_threads=-1"));
+  check(args(i).contains("--vulkan_pipeline_creation_threads=2"));
   check(args(i).contains("--vulkan_gpu_stage_timing_interval=0"));
   check(args(i).contains("--vulkan_submit_on_primary_buffer_end=true"));
   check(args(i).contains("--video_mode_width=1280")&&args(i).contains("--video_mode_height=720"));
@@ -58,7 +58,7 @@ public class GraphicsHarness {
   check(args(j).contains("--vulkan_texture_mip_drop=2"));
   check(args(j).contains("--vulkan_pipeline_creation_threads=2"));
   check(args(j).contains("--vulkan_gpu_stage_timing_interval=64"));
-  check(args(j).contains("--video_mode_width=960")&&args(j).contains("--video_mode_height=540"));
+  check(args(j).contains("--video_mode_width=1280")&&args(j).contains("--video_mode_height=720"));
   check(args(j).contains("--vulkan_gpu_timing_interval=0")&&args(j).contains("--vulkan_submit_on_primary_buffer_end=false"));
   check(!args(j).stream().anyMatch(s->s.contains("refresh_rate"))); // never slow simulation to fake 30 FPS
   check(GraphicsSettings.ssa(j)&&GraphicsSettings.area(j)&&GraphicsSettings.sustained(j));
@@ -69,25 +69,59 @@ public class GraphicsHarness {
   g.setFilter(255);g.setCacheMb(0);check(g.filter()==-1&&g.cacheMb()==384);
   g.setMipDrop(255);check(g.mipDrop()==0);
   g.setVideoMode(2);g.setGpuTiming(1);Intent low=new Intent();g.attach(low);
-  check(args(low).contains("--video_mode_width=854")&&args(low).contains("--video_mode_height=480"));
+  check(args(low).contains("--video_mode_width=1280")&&args(low).contains("--video_mode_height=720"));
   g.setVideoMode(255);g.setGpuTiming(-1);check(g.videoMode()==0&&g.gpuTiming()==64);
   g.setPipelineThreads(255);check(g.pipelineThreads()==-1);
-  g.setPipelineThreads(4);
-  g.reset();check(!g.ssa()&&!g.renderArea()&&!g.sustained()&&g.mipDrop()==0);
+  check(args(i).contains("--vulkan_transfer_render_area=true"));
+  g.setTurnipMode(2);g.setPanvkLateStencil(true);
+  g.applyPreset(GraphicsSettings.PRESET_LOW);
+  check(g.activePreset()==GraphicsSettings.PRESET_LOW&&g.presetName().contains("Baixo"));
+  Intent pLow=new Intent();g.attach(pLow);
+  check(args(pLow).contains("--anisotropic_override=0"));
+  check(args(pLow).contains("--texture_cache_memory_limit_hard=512"));
+  check(args(pLow).contains("--vulkan_submit_on_primary_buffer_end=false"));
+  check(args(pLow).contains("--vulkan_gpu_timing_interval=64"));
+  check(args(pLow).contains("--port_scene_resolution_percent=50"));
+  check(args(pLow).contains("--port_internal_resolution_percent=100"));
+  check(args(pLow).contains("--gpu_frame_rate_limit=30"));
+  check(GraphicsSettings.scaleDescription(pLow).contains("520×312"));
+  check(!args(pLow).stream().anyMatch(s->s.contains("disable_shadow")||s.contains("fast_postprocess")));
+  g.applyPreset(GraphicsSettings.PRESET_HIGH);
+  check(g.activePreset()==GraphicsSettings.PRESET_HIGH&&g.presetName().contains("Alto"));
+  Intent pHigh=new Intent();g.attach(pHigh);
+  check(args(pHigh).contains("--anisotropic_override=2"));
+  check(args(pHigh).contains("--texture_cache_memory_limit_hard=1536"));
+  check(args(pHigh).contains("--vulkan_spirv_optimize=true"));
+  g.applyPreset(GraphicsSettings.PRESET_BALANCED);
+  check(g.activePreset()==GraphicsSettings.PRESET_BALANCED);
+  Intent pBalanced=new Intent();g.attach(pBalanced);
+  check(args(pBalanced).contains("--port_scene_resolution_percent=75"));
+  check(GraphicsSettings.scaleDescription(pBalanced).contains("780×468"));
+  check(g.turnipMode()==2&&g.panvkLateStencil()); // Presets preserve driver choices.
+  g.setScalePercent(100);check(g.activePreset()==-1&&g.presetName().equals("Personalizado"));
+  check(args(pBalanced).contains("--port_scene_resolution_percent=75")); // immutable snapshot
+  g.setScalePercent(255);check(g.scalePercent()==100);
+  g.setCompactMemory(true);Intent compact=new Intent();g.attach(compact);
+  check(args(compact).contains("--texture_cache_memory_limit_soft=128"));
+  check(args(compact).contains("--texture_cache_memory_limit_hard=256"));
+  g.setEconomy(true);g.setFpsLimit(0);Intent economy=new Intent();g.attach(economy);
+  check(args(economy).contains("--gpu_frame_rate_limit=30"));
+  g.applyPreset(-1);check(g.activePreset()==-1); // Invalid preset leaves settings alone.
+  g.reset();check(!g.ssa()&&g.renderArea()&&!g.sustained()&&g.mipDrop()==0);
   check(!g.batch()&&g.videoMode()==0&&g.gpuTiming()==64);
   check(g.pipelineThreads()==-1&&!g.gpuStages());
-  check(GraphicsSettings.summary(i).contains("scale=1x"));
+  check(GraphicsSettings.summary(i).contains("requested_internal="));
  }
 }'''
 }
 with tempfile.TemporaryDirectory(prefix='mkvdcu-settings-') as temporary:
     directory = Path(temporary)
     for name, source in sources.items():
-        path = directory/name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(source)
+        path = directory/name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(source, encoding="utf-8")
     for debug in (False, True):
         (directory/'org/mkvdcu/android/BuildConfig.java').write_text(
             'package org.mkvdcu.android; final class BuildConfig { static final boolean DEBUG='+str(debug).lower()+'; }')
-        subprocess.run([str(jdk/'javac.exe'), '-d', temporary,
+        subprocess.run([str(jdk/'javac.exe'), '-encoding', 'UTF-8', '-d', temporary,
             str(root/'android/app/src/main/java/org/mkvdcu/android/GraphicsSettings.java'),
             *map(str,directory.rglob('*.java'))], check=True)
         subprocess.run([str(jdk/'java.exe'), '-cp', temporary, 'org.mkvdcu.android.GraphicsHarness'], check=True)
