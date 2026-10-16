@@ -7,10 +7,31 @@ import re
 root = Path(__file__).resolve().parents[2]
 jdk = Path('C:/Program Files/Android/Android Studio/jbr/bin')
 ui=(root/'android/app/src/main/java/org/mkvdcu/android/MainActivity.java').read_text(encoding='utf8')
+settings=(root/'android/app/src/main/java/org/mkvdcu/android/GraphicsSettings.java').read_text(encoding='utf8')
+assert 'Desempenho Mali — alvo 30 FPS' in settings
+assert 'O limitador atua só na apresentação' in settings
+assert 'Mantém um limite menor, como 24 FPS, se você o selecionou' in ui
+assert 'não pausa o XE_SWAP nem altera o relógio guest' in ui
 assert not re.search(r'new AlertDialog\.Builder\(this\)\.setTitle\([^;]*?\.setMessage\([^;]*?\.setSingleChoiceItems',ui)
 assert '"Pools Vulkan ociosos: " + graphics.idleCommandPoolLimit()' in ui
 assert re.search(r'if \(which == 27\).*?setSingleChoiceItems\(new String\[\]\{[^}]*32[^}]*\}.*?setIdleCommandPoolLimit', ui, re.S)
+assert '"Pulo de quadros da apresentação: " + graphics.frameSkip()' in ui
+assert re.search(r'if \(which == 28\).*?Pular 1 quadro.*?setFrameSkip', ui, re.S)
 swap=(root/'references/rexglue-sdk/src/graphics/vulkan/command_processor.cpp').read_text(encoding='utf8')
+guest_gpu=(root/'references/rexglue-sdk/src/graphics/command_processor.cpp').read_text(encoding='utf8')
+xe_swap=guest_gpu[guest_gpu.index('bool CommandProcessor::ExecutePacketType3_XE_SWAP'):guest_gpu.index('bool CommandProcessor::ExecutePacketType3_INDIRECT_BUFFER')]
+android_path=xe_swap[xe_swap.index('#else'):xe_swap.index('#endif', xe_swap.index('#else'))]
+assert 'next_swap_time_ = {};' in android_path and 'IssueSwap(' in xe_swap
+assert 'Sleep(' not in android_path
+clock=(root/'references/rexglue-sdk/src/core/clock.cpp').read_text(encoding='utf8')
+runtime=(root/'references/rexglue-sdk/src/system/runtime.cpp').read_text(encoding='utf8')
+assert 'REXCVAR_DEFINE_BOOL(clock_no_scaling, false' in clock
+assert 'double guest_time_scalar_ = 1.0;' in clock
+assert 'chrono::Clock::set_guest_time_scalar(1.0);' in runtime
+issue=swap[swap.index('void VulkanCommandProcessor::IssueSwap'):swap.index('bool VulkanCommandProcessor::PushBufferMemoryBarrier')]
+skip=issue[issue.index('// Decimate presentation work only'):issue.index('bool skip_present_due_async_placeholder')]
+assert 'REXCVAR_GET(gpu_frame_generation)' in skip and 'REXCVAR_GET(present_frame_skip)' in skip
+assert skip.index('EndSubmission(true)') < skip.index('return;')
 swap=swap[swap.index('  const bool fg_bypass_direct'):swap.index('bool VulkanCommandProcessor::PushBufferMemoryBarrier')]
 assert swap.index('EndSubmission(true)') < swap.index('frame_generator_->Submit')
 assert 'frame_generator_->CanBypass()' in swap
@@ -58,6 +79,7 @@ public class GraphicsHarness {
   check(args(i).contains("--vulkan_pipeline_creation_threads=2"));
   check(args(i).contains("--vulkan_gpu_stage_timing_interval=0"));
   check(args(i).contains("--vulkan_idle_command_pool_limit=8"));
+ check(args(i).contains("--present_frame_skip=0"));
   check(args(i).contains("--port_gpu_ring_backoff=true"));
   check(args(i).contains("--vulkan_fragment_relaxed_precision=false"));
   check(args(i).contains("--vulkan_dxt1_compact=false"));
@@ -95,7 +117,7 @@ public class GraphicsHarness {
   check(args(i).contains("--vulkan_transfer_render_area=true"));
   g.setTurnipMode(2);g.setPanvkLateStencil(true);
   g.applyPreset(GraphicsSettings.PRESET_LOW);
-  check(g.activePreset()==GraphicsSettings.PRESET_LOW&&g.presetName().contains("Baixo"));
+  check(g.activePreset()==GraphicsSettings.PRESET_LOW&&g.presetName().contains("Desempenho Mali"));
   Intent pLow=new Intent();g.attach(pLow);
   check(args(pLow).contains("--port_gpu_ring_backoff=true"));
   check(args(pLow).contains("--vulkan_fragment_relaxed_precision=false")&&args(pLow).contains("--vulkan_dxt1_compact=false"));
@@ -128,6 +150,10 @@ public class GraphicsHarness {
   check(args(compact).contains("--texture_cache_memory_limit_hard=256"));
   g.setEconomy(true);g.setFpsLimit(0);Intent economy=new Intent();g.attach(economy);
   check(args(economy).contains("--present_frame_rate_limit=30"));
+  g.setFrameSkip(2);Intent skipped=new Intent();g.attach(skipped);
+  check(args(skipped).contains("--present_frame_skip=2"));
+  check(args(i).contains("--present_frame_skip=0")); // immutable session snapshot
+  g.setFrameSkip(4);check(g.frameSkip()==0);
   check(g.panvkTilerHeapMb()==0);
   g.setPanvkTilerHeapMb(128);Intent heap=new Intent();g.attach(heap);
   check(GraphicsSettings.panvkTilerHeapMb(heap)==128);
@@ -164,6 +190,7 @@ public class GraphicsHarness {
   check(!g.batch()&&g.videoMode()==0&&g.gpuTiming()==64);
   check(g.pipelineThreads()==-1&&!g.gpuStages());
   check(g.idleCommandPoolLimit()==8);
+  check(g.frameSkip()==0);
   check(GraphicsSettings.summary(i).contains("requested_internal="));
  }
 }'''

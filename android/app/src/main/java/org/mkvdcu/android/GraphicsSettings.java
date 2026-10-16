@@ -20,6 +20,7 @@ final class GraphicsSettings {
     static final String[] SCALE_NAMES = {"1× — cena 1040×624", "0,75× — cena 780×468 (experimental)", "0,5× — cena 520×312 (experimental)"};
     static final int[] CORE_COUNTS = {0, 1, 2, 3, 4, 6, 8, 12};
     static final int[] FPS_LIMITS = {0, 24, 30, 45, 60, 90, 120};
+    static final int[] FRAME_SKIP_VALUES = {0, 1, 2, 3};
     static final int[] IDLE_COMMAND_POOL_LIMITS = {8, 16, 32};
     static final int[] FRAME_GENERATION_FACTORS = {2, 3, 4};
 
@@ -27,12 +28,12 @@ final class GraphicsSettings {
     static final int PRESET_BALANCED = 1;
     static final int PRESET_HIGH = 2;
     static final String[] PRESET_NAMES = {
-        "Baixo — Mali / menor custo",
+        "Desempenho Mali — alvo 30 FPS",
         "Padrão — equilibrado",
         "Alto — qualidade"
     };
     static final String[] PRESET_DESCRIPTIONS = {
-        "Cena solicitada 0,5× (520×312), saída 720p, mip DXT +1, cache 256/512 MiB, submissões agrupadas e limite de saída 30 FPS. Escala experimental; não limita a simulação do jogo.",
+        "Cena solicitada 0,5× (520×312), saída 720p, mip DXT +1, cache 256/512 MiB, submissões agrupadas e alvo de apresentação 30 FPS. O limitador atua só na apresentação; não pausa o XE_SWAP nem muda a escala do relógio do jogo.",
         "Cena solicitada 0,75× (780×468), saída 720p, texturas originais, cache 384/768 MiB, submissões agrupadas e limite de saída 60 FPS. Escala experimental; não limita a simulação do jogo.",
         "Cena nativa 1040×624, saída 720p, texturas originais, filtragem 2×, cache 768/1536 MiB e limite de saída 60 FPS. Maior uso de RAM."
     };
@@ -114,6 +115,8 @@ final class GraphicsSettings {
     void setCompactMemory(boolean value) { editCustom().putBoolean(PREFIX + "compact_memory", value).apply(); }
     int fpsLimit() { return allowed(prefs.getInt(PREFIX + "fps_limit", 60), FPS_LIMITS, 60); }
     void setFpsLimit(int value) { editCustom().putInt(PREFIX + "fps_limit", allowed(value, FPS_LIMITS, 60)).apply(); }
+    int frameSkip() { return allowed(prefs.getInt(PREFIX + "frame_skip", 0), FRAME_SKIP_VALUES, 0); }
+    void setFrameSkip(int value) { editCustom().putInt(PREFIX + "frame_skip", allowed(value, FRAME_SKIP_VALUES, 0)).apply(); }
     boolean frameGenerationAdaptive() { return prefs.getBoolean(PREFIX + "frame_generation_adaptive", true); }
     void setFrameGenerationAdaptive(boolean value) { editCustom().putBoolean(PREFIX + "frame_generation_adaptive", value).apply(); }
     boolean frameGeneration() { return prefs.getBoolean(PREFIX + "frame_generation", false); }
@@ -184,6 +187,7 @@ final class GraphicsSettings {
             .remove(PREFIX + "batch").remove(PREFIX + "video_mode").remove(PREFIX + "gpu_timing").remove(PREFIX + "pipeline_threads")
             .remove(PREFIX + "gpu_stages").remove(PREFIX + "turnip_mode").remove(PREFIX + "panvk_late_stencil").remove(PREFIX + "scale_percent").remove(PREFIX + "cpu_cores")
             .remove(PREFIX + "economy").remove(PREFIX + "compact_memory").remove(PREFIX + "fps_limit")
+            .remove(PREFIX + "frame_skip")
             .remove(PREFIX + "frame_generation").remove(PREFIX + "frame_generation_adaptive").remove(PREFIX + "frame_generation_factor").remove(PREFIX + "panvk_tiler_heap_mb")
             .remove(PREFIX + "ring_backoff").remove(PREFIX + "relaxed_fragment").remove(PREFIX + "compact_dxt1")
             .remove(PREFIX + "idle_command_pool_limit")
@@ -198,6 +202,7 @@ final class GraphicsSettings {
             .putExtra(PREFIX + "pipeline_threads", pipelineThreads()).putExtra(PREFIX + "turnip_mode", turnipMode()).putExtra(PREFIX + "panvk_late_stencil", panvkLateStencil()).putExtra(PREFIX + "panvk_tiler_heap_mb", panvkTilerHeapMb())
             .putExtra(PREFIX + "scale_percent", scalePercent()).putExtra(PREFIX + "cpu_cores", cores())
             .putExtra(PREFIX + "economy", economy()).putExtra(PREFIX + "compact_memory", compactMemory()).putExtra(PREFIX + "fps_limit", fpsLimit())
+            .putExtra(PREFIX + "frame_skip", frameSkip())
             .putExtra(PREFIX + "frame_generation", frameGeneration())
             .putExtra(PREFIX + "frame_generation_factor", frameGenerationFactor())
             .putExtra(PREFIX + "frame_generation_adaptive", frameGenerationAdaptive())
@@ -217,6 +222,7 @@ final class GraphicsSettings {
         // Never pace guest XE_SWAP: that can slow the game simulation.
         args.add("--gpu_frame_rate_limit=0");
         args.add("--present_frame_rate_limit=" + limit);
+        args.add("--present_frame_skip=" + allowed(intent.getIntExtra(PREFIX + "frame_skip", 0), FRAME_SKIP_VALUES, 0));
         args.add("--gpu_frame_generation=" + intent.getBooleanExtra(PREFIX + "frame_generation", false));
         args.add("--gpu_frame_generation_factor=" + allowed(intent.getIntExtra(PREFIX + "frame_generation_factor", 2), FRAME_GENERATION_FACTORS, 2));
         args.add("--gpu_frame_generation_adaptive=" + intent.getBooleanExtra(PREFIX + "frame_generation_adaptive", true));
@@ -264,6 +270,7 @@ final class GraphicsSettings {
     static String summary(Intent intent) {
         return "separate_present_queue=" + intent.getBooleanExtra(PREFIX + "present_queue", false) + "; requested_internal=" + scaleDescription(intent) + "; cpu_cores=" + cores(intent) + "; economy=" + economy(intent) +
             "; compact_memory=" + intent.getBooleanExtra(PREFIX + "compact_memory", false) + "; presentation_limit_fps=" + effectiveFpsLimit(intent) + "; anisotropic=" + allowed(intent.getIntExtra(PREFIX + "filter", -1), FILTERS, -1) +
+            "; presentation_frame_skip=" + allowed(intent.getIntExtra(PREFIX + "frame_skip", 0), FRAME_SKIP_VALUES, 0) +
             "; texture_cache_soft_mb=" + allowed(intent.getIntExtra(PREFIX + "cache_mb", 384), CACHE_MB, 384) +
             "; spirv_ssa=" + ssa(intent) + "; scissor_area=" + area(intent) + "; transfer_area=" + intent.getBooleanExtra(PREFIX + "transfer_area", true) +
             "; sustained_requested=" + sustained(intent) + "; texture_mip_drop=" +

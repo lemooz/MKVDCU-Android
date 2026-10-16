@@ -78,3 +78,9 @@ Future releases must increment versionCode and attach each versioned APK plus a 
 versionName `0.1.6`, versionCode `7`. Since v0.1.5: scales actual UE3 scene buffers (1040×624 and alternate 1024×576) before resource initialization, with guarded XEX anchors and a host regression test; adds Low/Balanced/High graphics presets; adds independent bounded render-area handling and A/B diagnostics for transfers/resolves; separates Android display refresh requests from guest simulation pacing to avoid slow motion; initializes the Android Vulkan cache root; and updates the overlay, settings checks, and ARM64 packaging path. Scene scaling remains experimental; no new physical Mali/Adreno performance result is claimed.
 
 The package has not yet received device validation. Attach the versioned Release APK and matching SHA-256 sidecar; diagnostic builds are not part of the standard prerelease.
+
+## v0.1.16 prerelease
+
+versionName `0.1.16`, versionCode `16`. Adds Vulkan presentation frame skip (1–3 skipped presentations) without dropping guest draws or simulation steps; renames the low-cost preset to Mali Performance with a 30 FPS presentation target; and adds regression checks that Android `XE_SWAP` remains unpaced and the guest clock starts at scale 1.0. A 30 FPS target is not a device performance guarantee. The build includes the previously local v0.1.15 frame-skip changes. No new physical device validation is claimed.
+
+Release APK and SHA-256 sidecar are attached to the GitHub prerelease; native library provenance verification passed.

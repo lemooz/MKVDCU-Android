@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.1.16 — local / not published
+
+### Português
+
+- Renomeado o preset de menor custo para **Desempenho Mali — alvo 30 FPS**, deixando explícito que 30 FPS é a cadência de apresentação solicitada e não uma garantia de desempenho ou limite da simulação.
+- Documentada e protegida por regressão a separação entre apresentação e relógio do jogo: Android não espera no `XE_SWAP`, o relógio guest inicia em escala 1,0, e limites menores escolhidos pelo usuário (como 24 FPS) continuam respeitados.
+
+### English
+
+- Renamed the lowest-cost preset to **Mali Performance — 30 FPS target**, clarifying that 30 FPS is a requested presentation cadence, not a performance guarantee or a simulation cap.
+- Documented and regression-guarded the separation between presentation and game clock: Android does not wait in `XE_SWAP`, the guest clock starts at 1.0 scale, and lower user-selected caps (such as 24 FPS) remain respected.
+
+## v0.1.15 — local / not published
+
+### Português
+
+- Adicionada opção de pulo de 1 a 3 quadros na apresentação Vulkan. Os comandos gráficos, resolves, áudio e simulação continuam em todos os quadros; o recurso reduz somente o trabalho de apresentar o resultado e não promete aumentar o FPS da cena.
+- Frame generation tem prioridade: o pulo de apresentação fica inativo enquanto a geração de quadros estiver habilitada.
+
+### English
+
+- Added a Vulkan presentation frame-skip option for 1 to 3 frames. Graphics commands, resolves, audio and simulation still run for every frame; this only reduces presentation work and does not promise a higher scene FPS.
+- Frame generation takes precedence: presentation skipping is inactive while frame generation is enabled.
+
 ## v0.1.14 — local / not published
 
 ### Português

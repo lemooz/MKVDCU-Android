@@ -337,7 +337,8 @@ public class MainActivity extends Activity {
             "Precisão reduzida em cores experimental: " + (graphics.relaxedFragment() ? "ativada" : "desativada"),
             "Texturas DXT1 em 16 bits experimental: " + (graphics.compactDxt1() ? "ativadas" : "desativadas"),
             "Heap de tiler PanVK: " + (graphics.panvkTilerHeapMb()==0 ? "padrão do driver" : graphics.panvkTilerHeapMb()+" MiB"),
-            "Pools Vulkan ociosos: " + graphics.idleCommandPoolLimit()};
+            "Pools Vulkan ociosos: " + graphics.idleCommandPoolLimit(),
+            "Pulo de quadros da apresentação: " + graphics.frameSkip()};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) showPresetDialog();
@@ -437,7 +438,7 @@ public class MainActivity extends Activity {
                         .setNegativeButton("Cancelar",null).show();
                 }
                 if (which == 17) new AlertDialog.Builder(this).setTitle("Economia de energia")
-                    .setMessage("Limita a saída a no máximo 30 FPS e usa até dois compiladores automáticos. Mantém 24 FPS se selecionado. A simulação não recebe pausas no XE_SWAP. Pode reduzir trabalho de apresentação; não limita todo o trabalho da GPU nem acelera uma cena lenta. O Android escolhe os núcleos por padrão; afinidade manual é separada e pode reduzir desempenho.")
+                    .setMessage("Limita a apresentação a no máximo 30 FPS e usa até dois compiladores automáticos. Mantém um limite menor, como 24 FPS, se você o selecionou. O limite não pausa o XE_SWAP nem altera o relógio guest (escala 1,0), evitando desacelerar a simulação por espera do limitador. Ele pode reduzir trabalho de apresentação, mas não limita todos os draws da GPU nem acelera uma cena lenta. O modo Desempenho Mali também usa alvo de saída de 30 FPS. O Android escolhe os núcleos por padrão; afinidade manual é separada e pode reduzir desempenho.")
                     .setPositiveButton(graphics.economy() ? "Desativar" : "Ativar",(d,w)->{graphics.setEconomy(!graphics.economy());showGraphicsSettings();})
                     .setNegativeButton("Cancelar",null).show();
                 if (which == 18) new AlertDialog.Builder(this).setTitle("Cache compacto — próxima sessão")
@@ -488,6 +489,14 @@ public class MainActivity extends Activity {
                         "Controla quantos command pools já concluídos ficam em cache para reduzir criação/destruição. No A/B da luta em PanVK, 8/16/32 mediram 7,27/7,33/7,57 FPS; 32 usou cerca de 0,55 GiB de PSS adicional frente a 8. O ganho medido foi pequeno e depende da cena. Use 8 para priorizar RAM, 32 para comparar desempenho. Pools com trabalho em voo nunca são descartados. Reinicie o jogo após alterar.")
                         .setSingleChoiceItems(new String[]{"8 — menor uso de RAM (padrão)", "16 — equilibrado", "32 — mais cache de pools"}, selected, (d, w) -> {
                             graphics.setIdleCommandPoolLimit(GraphicsSettings.IDLE_COMMAND_POOL_LIMITS[w]); d.dismiss(); showGraphicsSettings();
+                        }).setNegativeButton("Cancelar", null).show();
+                }
+                if (which == 28) {
+                    int selected = graphics.frameSkip();
+                    graphicsChoiceDialog("Pulo de quadros da apresentação — próxima sessão",
+                        "Mostra 1 quadro e pula o número selecionado de apresentações seguintes. Os draws, resolves, áudio e simulação do jogo continuam em todos os quadros; isso reduz somente o trabalho final de apresentação e pode não aumentar o FPS da cena. Frame generation tem prioridade e desativa este pulo enquanto estiver ativa. Reinicie o jogo após alterar.")
+                        .setSingleChoiceItems(new String[]{"Desativado", "Pular 1 quadro (mostrar 1 de cada 2)", "Pular 2 quadros (mostrar 1 de cada 3)", "Pular 3 quadros (mostrar 1 de cada 4)"}, selected, (d, w) -> {
+                            graphics.setFrameSkip(GraphicsSettings.FRAME_SKIP_VALUES[w]); d.dismiss(); showGraphicsSettings();
                         }).setNegativeButton("Cancelar", null).show();
                 }
                 if (which == 23) new AlertDialog.Builder(this).setTitle("Espera econômica do ring GPU")
