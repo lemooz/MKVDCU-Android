@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.1.13 — pré-release
+
+### Português
+
+- Corrigida referência nula ao configurar o limitador antes da criação do overlay, que interrompia o carregamento das bibliotecas do jogo na 0.1.12.
+- Callbacks de métricas e controles respeitam falhas de inicialização SDL, preservando o erro original sem encerrar o processo por chamadas JNI prematuras.
+- Adicionada regressão executando o loader real com overlay ausente/presente e falha controlada.
+
+### English
+
+- Fixed a null HUD reference during frame-cap setup before overlay construction, which interrupted game library loading in 0.1.12.
+- Metrics and input callbacks respect SDL initialization failure, preserving the original error without crashing on premature JNI calls.
+- Added regression executing the production loader with missing/present HUD and a controlled loader failure.
+
 ## v0.1.12 — pré-release
 
 ### Português

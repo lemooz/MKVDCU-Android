@@ -52,6 +52,7 @@ public class GameActivity extends SDLActivity {
     private android.content.BroadcastReceiver benchmarkReceiver;
     private final Runnable performanceUpdate = new Runnable() {
         @Override public void run() {
+            if (SDLActivity.mBrokenLibraries) return;
             try {
                 String snapshot = nativeReadPerformanceSnapshot();
                 if (!startupReported && !snapshot.startsWith("0,")) {
@@ -133,6 +134,9 @@ public class GameActivity extends SDLActivity {
         // Java default (0 = uncapped) for a session configured at 30/60 FPS.
         displayRateRequestHz = GraphicsSettings.displayRateRequestHz(getIntent());
         super.onCreate(savedInstanceState);
+        // SDL displays the original loader error. Do not hide it with JNI calls
+        // or attach controls until all game libraries and SDL bindings exist.
+        if (SDLActivity.mBrokenLibraries) return;
         performanceCaptureEnabled = diagnostics || BuildConfig.DEBUG ||
             getIntent().getBooleanExtra("perf_overlay_enabled", new Prefs(this).isPerformanceOverlayEnabled());
         // Only debuggable APKs expose the ADB benchmark control. The native
@@ -282,6 +286,7 @@ public class GameActivity extends SDLActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (SDLActivity.mBrokenLibraries) return;
         if(virtualGamepadView!=null)virtualGamepadView.reloadLayout();
         if (performanceOverlay != null && new Prefs(this).isPerformanceOverlayEnabled()) {
             performanceOverlay.start();
@@ -295,7 +300,7 @@ public class GameActivity extends SDLActivity {
         if (performanceOverlay != null) performanceOverlay.stop();
         healthHandler.removeCallbacks(performanceUpdate);
         if(virtualGamepadView!=null)virtualGamepadView.releaseAll();
-        nativeSetVirtualGamepadStateV2(0,0,0,0,0,0,0);
+        if (!SDLActivity.mBrokenLibraries) nativeSetVirtualGamepadStateV2(0,0,0,0,0,0,0);
         super.onPause();
     }
 
@@ -315,7 +320,7 @@ public class GameActivity extends SDLActivity {
         if (performanceLog != null) try { performanceLog.close(); } catch (java.io.IOException ignored) { }
         if (frameLog != null) try { frameLog.close(); } catch (java.io.IOException ignored) { }
         if(virtualGamepadView!=null)virtualGamepadView.releaseAll();
-        nativeSetVirtualGamepadStateV2(0,0,0,0,0,0,0);
+        if (!SDLActivity.mBrokenLibraries) nativeSetVirtualGamepadStateV2(0,0,0,0,0,0,0);
         super.onDestroy();
         if (sIsoPfd != null) {
             try {
@@ -439,12 +444,13 @@ public class GameActivity extends SDLActivity {
 
     @Override
     public void onBackPressed() {
+        if (SDLActivity.mBrokenLibraries) { super.onBackPressed(); return; }
         toggleInGameMenu();
     }
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
+        if (!SDLActivity.mBrokenLibraries && event.getKeyCode() == KeyEvent.KEYCODE_BACK && event.getAction() == KeyEvent.ACTION_UP) {
             toggleInGameMenu();
             return true;
         }
@@ -455,8 +461,10 @@ public class GameActivity extends SDLActivity {
     public void loadLibraries() {
         cpuPolicyStatus = DriverNative.configureCpuLimit(GraphicsSettings.cores(getIntent()), GraphicsSettings.economy(getIntent()));
         Log.i(TAG, cpuPolicyStatus);
-        if (performanceOverlay != null) performanceOverlay.setCpuPolicyStatus(cpuPolicyStatus);
+        if (performanceOverlay != null) {
+            performanceOverlay.setCpuPolicyStatus(cpuPolicyStatus);
             performanceOverlay.setPresentationLimit(GraphicsSettings.effectiveFpsLimit(getIntent()));
+        }
         DriverStore.Driver driver = new DriverStore(this).get(getIntent().getStringExtra("driver_id"));
         driver.turnipMode = driver.kind.equals("turnip") ? GraphicsSettings.turnipMode(getIntent()) : 0;
                 driver.panvkLateStencil = driver.kind.equals("panvk") && GraphicsSettings.panvkLateStencil(getIntent());
