@@ -82,7 +82,8 @@ def main():
             if name == 'librexruntime.so' and 'GImGui' not in exports:
                 raise ValueError('Runtime must own the single ImGui context')
             if name == 'librexruntime.so':
-                required = {'Java_org_mkvdcu_android_DriverNative_configure',
+                required = {'Java_org_mkvdcu_android_DriverNative_configurePanvkTilerHeap',
+                            'Java_org_mkvdcu_android_DriverNative_configure',
                             'Java_org_mkvdcu_android_DriverNative_probe',
                             'Java_org_mkvdcu_android_DriverNative_identity',
                             'Java_org_mkvdcu_android_DriverNative_configureCpuLimit',
@@ -92,7 +93,7 @@ def main():
                             'Java_org_mkvdcu_android_DriverNative_setDiagnosticMode'}
                 if missing := required - exports:
                     raise ValueError(f'Driver JNI missing: {missing}')
-            if name == 'librexgpu-xenos.so' and not {'Java_org_mkvdcu_android_DriverNative_armCapture', 'Java_org_mkvdcu_android_DriverNative_armRenderExtentProbe'}.issubset(exports):
+            if name == 'librexgpu-xenos.so' and not {'Java_org_mkvdcu_android_DriverNative_armCapture', 'Java_org_mkvdcu_android_DriverNative_armRenderExtentProbe', 'Java_org_mkvdcu_android_DriverNative_setFrameGenerationBenchmark', 'Java_org_mkvdcu_android_DriverNative_frameGenerationStats', 'Java_org_mkvdcu_android_DriverNative_setIdleCommandPoolLimitBenchmark'}.issubset(exports):
                 raise ValueError('GPU library lacks the bounded frame capture JNI')
             if name == 'libpanvk_loader_hook.so':
                 required = {'mkvdcu_panvk_initialize_loader_hook', 'android_dlopen_ext', 'android_load_sphal_library'}

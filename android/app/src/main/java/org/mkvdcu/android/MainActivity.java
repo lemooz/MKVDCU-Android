@@ -293,6 +293,15 @@ public class MainActivity extends Activity {
         picker.show();
     }
 
+    // AlertDialog's message view replaces its list. Keep help in a separate
+    // action so radio choices remain visible and actionable on Android.
+    private AlertDialog.Builder graphicsChoiceDialog(String title, String explanation) {
+        return new AlertDialog.Builder(this).setTitle(title)
+            .setNeutralButton("Informações", (dialog, which) -> new AlertDialog.Builder(this)
+                .setTitle(title).setMessage(explanation)
+                .setPositiveButton("Voltar", (help, button) -> showGraphicsSettings()).show());
+    }
+
     private void showGraphicsSettings() {
         GraphicsSettings graphics = new GraphicsSettings(this);
         int filterIndex = 0;
@@ -323,10 +332,12 @@ public class MainActivity extends Activity {
             "Limite de FPS de saída: " + (graphics.fpsLimit()==0 ? "sem limite" : graphics.fpsLimit() + " FPS"),
             "Fila de apresentação separada: " + (graphics.presentQueue() ? "ativada" : "desativada"),
             "Área de transferências EDRAM/Resolve: " + (graphics.transferArea() ? "limitada" : "completa"),
-            "Frame generation experimental 2×: " + (graphics.frameGeneration() ? "ativada" : "desativada"),
+            "Frame generation experimental: " + (graphics.frameGeneration() ? (graphics.frameGenerationAdaptive() ? "adaptativa " : "forçada ") + graphics.frameGenerationFactor() + "×" : "desativada"),
             "Espera econômica do ring GPU: " + (graphics.ringBackoff() ? "ativada" : "desativada"),
             "Precisão reduzida em cores experimental: " + (graphics.relaxedFragment() ? "ativada" : "desativada"),
-            "Texturas DXT1 em 16 bits experimental: " + (graphics.compactDxt1() ? "ativadas" : "desativadas")};
+            "Texturas DXT1 em 16 bits experimental: " + (graphics.compactDxt1() ? "ativadas" : "desativadas"),
+            "Heap de tiler PanVK: " + (graphics.panvkTilerHeapMb()==0 ? "padrão do driver" : graphics.panvkTilerHeapMb()+" MiB"),
+            "Pools Vulkan ociosos: " + graphics.idleCommandPoolLimit()};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) showPresetDialog();
@@ -410,8 +421,7 @@ public class MainActivity extends Activity {
                     int selected = 0;
                     for (int i = 0; i < GraphicsSettings.PIPELINE_THREADS.length; i++)
                         if (GraphicsSettings.PIPELINE_THREADS[i] == graphics.pipelineThreads()) selected = i;
-                    new AlertDialog.Builder(this).setTitle("Compilação de pipelines")
-                        .setMessage("Automático usa até dois compiladores para limitar concorrência e memória de pico. Quatro podem aquecer o cache mais rápido, mas consumir mais RAM. Não omite draws nem reduz a qualidade. Compare na mesma cena, com cache frio e aquecido.")
+                    graphicsChoiceDialog("Compilação de pipelines","Automático usa até dois compiladores para limitar concorrência e memória de pico. Quatro podem aquecer o cache mais rápido, mas consumir mais RAM. Não omite draws nem reduz a qualidade. Compare na mesma cena, com cache frio e aquecido.")
                         .setSingleChoiceItems(new String[]{"Automático (até 2)", "1 compilador", "2 compiladores", "4 compiladores"}, selected, (d, w) -> {
                             graphics.setPipelineThreads(GraphicsSettings.PIPELINE_THREADS[w]); d.dismiss(); showGraphicsSettings();
                         }).setNegativeButton("Cancelar", null).show();
@@ -422,8 +432,7 @@ public class MainActivity extends Activity {
                     if (selected == 0 && graphics.cores() != 0) {
                         for(int i=1;i<counts.length;i++)if(counts[i] >= graphics.cores()) { selected=i; break; }
                     }
-                    new AlertDialog.Builder(this).setTitle("Núcleos — próxima sessão")
-                        .setMessage("Aplica afinidade ao processo do jogo e às threads nativas, escolhendo CPUs disponíveis no Android. A opção limita CPUs elegíveis; não reduz diretamente a frequência nem garante menor temperatura. Com PWR ativo, CPUs de menor capacidade são priorizadas quando o kernel expõe essa informação; caso contrário, o Android mantém seu escalonamento automático.")
+                    graphicsChoiceDialog("Núcleos — próxima sessão","Aplica afinidade às CPUs permitidas pelo Android e mostra a máscara realmente aceita no overlay. A seleção prioriza cpu_capacity; se não estiver disponível, usa a frequência máxima por CPU. Se nenhum ranking for legível, mantém o escalonador Android sem fixar núcleos por número. Limitar CPUs não reduz diretamente a frequência nem garante menor temperatura.")
                         .setSingleChoiceItems(names,selected,(d,w)->{graphics.setCores(counts[w]);d.dismiss();showGraphicsSettings();})
                         .setNegativeButton("Cancelar",null).show();
                 }
@@ -437,8 +446,7 @@ public class MainActivity extends Activity {
                     .setNegativeButton("Cancelar",null).show();
                 if (which == 19) {
                     int selected=0;for(int i=0;i<GraphicsSettings.FPS_LIMITS.length;i++)if(GraphicsSettings.FPS_LIMITS[i]==graphics.fpsLimit())selected=i;
-                    new AlertDialog.Builder(this).setTitle("Limite de FPS de saída — próxima sessão")
-                        .setMessage("Limita as apresentações finais, incluindo frames gerados, sem pausar a simulação ou os swaps do jogo. O HUD separa FPS do jogo e de saída. Não aumenta FPS de cenas lentas nem limita todo o trabalho da GPU. PWR reduz opções acima de 30 para 30 FPS. Reinicie o jogo após alterar.")
+                    graphicsChoiceDialog("Limite de FPS de saída — próxima sessão","Limita as apresentações finais, incluindo frames gerados, sem pausar a simulação ou os swaps do jogo. O HUD separa FPS do jogo e de saída. Não aumenta FPS de cenas lentas nem limita todo o trabalho da GPU. PWR reduz opções acima de 30 para 30 FPS. Reinicie o jogo após alterar.")
                         .setSingleChoiceItems(new String[]{"Sem limite (avançado)", "24 FPS", "30 FPS", "45 FPS", "60 FPS", "90 FPS", "120 FPS"},selected,(d,w)->{graphics.setFpsLimit(GraphicsSettings.FPS_LIMITS[w]);d.dismiss();showGraphicsSettings();})
                         .setNegativeButton("Cancelar",null).show();
                 }
@@ -454,11 +462,33 @@ public class MainActivity extends Activity {
                         .setNegativeButton("Cancelar",null).show();
                 }
                 if (which == 22) {
-                    boolean enabled=graphics.frameGeneration();
-                    new AlertDialog.Builder(this).setTitle("Frame generation Vulkan — experimental")
-                        .setMessage("Gera um frame interpolado por frame real (2×) para aumentar a cadência visual em aparelhos que já mantêm cerca de 30 FPS reais ou mais. Não acelera simulação, gameplay ou resposta do controle; pode aumentar latência, consumo e artefatos, e custa GPU. Em aparelhos lentos, deixe desativado. Requer nova sessão e suporte de formato Vulkan; se indisponível, o Presenter normal é usado.")
-                        .setPositiveButton(enabled ? "Desativar" : "Ativar 2×",(d,w)->{graphics.setFrameGeneration(!enabled);showGraphicsSettings();})
-                        .setNegativeButton("Cancelar",null).show();
+                    int selected = !graphics.frameGeneration() ? 0 :
+                        (graphics.frameGenerationAdaptive() ? 1 : 4) + graphics.frameGenerationFactor() - 2;
+                    graphicsChoiceDialog("Frame generation - proxima sessao",
+                        "O modo adaptativo só interpola após manter cerca de 30 FPS reais e desvia abaixo de 24 FPS. 3×/4× podem aumentar a cadência de saída, mas elevam custo e pressão na fila; o driver e as imagens disponíveis limitam o que chega ao Presenter. O modo forçado é para diagnóstico e pode reduzir FPS real. A simulação não é acelerada nem pausada.")
+                        .setSingleChoiceItems(new String[]{"Desativada", "Adaptativa 2×", "Adaptativa 3×", "Adaptativa 4×", "Forçada 2× (diagnóstico)", "Forçada 3× (diagnóstico)", "Forçada 4× (diagnóstico)"}, selected, (d,w) -> {
+                            if (w != 0) graphics.setFrameGenerationFactor(w <= 3 ? w + 1 : w - 2);
+                            graphics.setFrameGeneration(w != 0); graphics.setFrameGenerationAdaptive(w >= 1 && w <= 3);
+                            d.dismiss(); showGraphicsSettings();
+                        }).setNegativeButton("Cancelar", null).show();
+                }
+                if (which == 26) {
+                    int selected=0;for(int i=0;i<GraphicsSettings.PANVK_TILER_HEAPS.length;i++)if(GraphicsSettings.PANVK_TILER_HEAPS[i]==graphics.panvkTilerHeapMb())selected=i;
+                    graphicsChoiceDialog("Heap de tiler PanVK - experimental",
+                        "Usa PANVK_TILER_HEAP_MB quando o driver oferece essa opcao. O FristOneRR usa 512 MiB por padrao. Valores menores podem poupar RAM, mas um heap insuficiente pode perder geometria ou falhar. Nao altera texturas, resolucao ou simulacao. Requer nova verificacao do driver e nova sessao. Padrao: escolha do driver.")
+                        .setSingleChoiceItems(new String[]{"Padrao do driver", "128 MiB (experimental)", "256 MiB (experimental)", "512 MiB", "1024 MiB"},selected,(d,w)->{
+                            graphics.setPanvkTilerHeapMb(GraphicsSettings.PANVK_TILER_HEAPS[w]);d.dismiss();showGraphicsSettings();
+                        }).setNegativeButton("Cancelar",null).show();
+                }
+                if (which == 27) {
+                    int selected = 0;
+                    for (int i = 0; i < GraphicsSettings.IDLE_COMMAND_POOL_LIMITS.length; i++)
+                        if (GraphicsSettings.IDLE_COMMAND_POOL_LIMITS[i] == graphics.idleCommandPoolLimit()) selected = i;
+                    graphicsChoiceDialog("Pools Vulkan ociosos — próxima sessão",
+                        "Controla quantos command pools já concluídos ficam em cache para reduzir criação/destruição. No A/B da luta em PanVK, 8/16/32 mediram 7,27/7,33/7,57 FPS; 32 usou cerca de 0,55 GiB de PSS adicional frente a 8. O ganho medido foi pequeno e depende da cena. Use 8 para priorizar RAM, 32 para comparar desempenho. Pools com trabalho em voo nunca são descartados. Reinicie o jogo após alterar.")
+                        .setSingleChoiceItems(new String[]{"8 — menor uso de RAM (padrão)", "16 — equilibrado", "32 — mais cache de pools"}, selected, (d, w) -> {
+                            graphics.setIdleCommandPoolLimit(GraphicsSettings.IDLE_COMMAND_POOL_LIMITS[w]); d.dismiss(); showGraphicsSettings();
+                        }).setNegativeButton("Cancelar", null).show();
                 }
                 if (which == 23) new AlertDialog.Builder(this).setTitle("Espera econômica do ring GPU")
                     .setMessage("Quando a GPU não libera espaço no ring, o thread do jogo espera de 50 a 400 µs após 16 consultas sem progresso. O atraso é reiniciado quando a GPU avança. Preserva os comandos e o watchdog do jogo; não limita XE_SWAP nem a simulação. Pode reduzir CPU e aquecimento; o resultado depende do aparelho. Exige nova sessão.")
@@ -476,8 +506,7 @@ public class MainActivity extends Activity {
                     .setMessage("Opção PANVK_STENCIL_LATE do FristOneRR 2.0-rc1. Pode corrigir triângulos pretos/luz ausente, mas também reduzir FPS e escurecer a imagem. Padrão desativado. Exige verificar novamente o pacote. Não altera o driver do sistema nem Turnip.")
                     .setPositiveButton(graphics.panvkLateStencil() ? "Desativar" : "Ativar", (d, w) -> { graphics.setPanvkLateStencil(!graphics.panvkLateStencil()); showGraphicsSettings(); })
                     .setNegativeButton("Cancelar", null).show();
-                if (which == 14) new AlertDialog.Builder(this).setTitle("Turnip — próxima sessão")
-                    .setMessage("Somente para driver Turnip importado. Automático mantém a escolha do driver; Sysmem evita o binning em tiles; GMEM força tiles. O melhor modo depende da GPU e da cena. Exige verificar novamente o pacote no gerenciador de drivers. Não afeta o driver do sistema nem PanVK.")
+                if (which == 14) graphicsChoiceDialog("Turnip — próxima sessão","Somente para driver Turnip importado. Automático mantém a escolha do driver; Sysmem evita o binning em tiles; GMEM força tiles. O melhor modo depende da GPU e da cena. Exige verificar novamente o pacote no gerenciador de drivers. Não afeta o driver do sistema nem PanVK.")
                     .setSingleChoiceItems(GraphicsSettings.TURNIP_MODES, graphics.turnipMode(), (d, w) -> {
                         graphics.setTurnipMode(w); d.dismiss(); showGraphicsSettings();
                     }).setNegativeButton("Cancelar", null).show();
@@ -555,6 +584,7 @@ public class MainActivity extends Activity {
                             d.kind.equals("adreno") ? "Adreno personalizado experimental\n" : "Turnip\n") + d.requirements() + d.reason());
         if (d.usable()) builder.setPositiveButton("Selecionar", (dialog, which) -> {
             prefs.setDriverId(id);
+            refresh();
             Toast.makeText(this, "Driver será usado na próxima sessão do jogo", Toast.LENGTH_LONG).show();
         });
         else if (d.minApi <= Build.VERSION.SDK_INT && d.packageIssue.isEmpty())
@@ -592,6 +622,21 @@ public class MainActivity extends Activity {
         String pending = prefs.getPendingGameDriver();
         if (!pending.isEmpty()) {
             prefs.setPendingGameDriver("");
+            // A low-memory kill is not evidence that the selected ICD failed.
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.app.ActivityManager manager = getSystemService(android.app.ActivityManager.class);
+                if (manager != null) try {
+                    for (android.app.ApplicationExitInfo info : manager.getHistoricalProcessExitReasons(getPackageName(), 0, 16)) {
+                        if (!(getPackageName() + ":game").equals(info.getProcessName())) continue;
+                        if (info.getReason() == android.app.ApplicationExitInfo.REASON_LOW_MEMORY) {
+                            refresh();
+                            showDriverError("O Android encerrou o jogo por falta de memória RAM. O driver selecionado foi mantido. Reduza o cache de texturas ou feche outros aplicativos antes de tentar novamente.");
+                            return;
+                        }
+                        break;
+                    }
+                } catch (RuntimeException error) { android.util.Log.w("MKVDCU", "Exit reason unavailable", error); }
+            }
             prefs.setDriverId("system");
             showDriverError("A sessão do driver personalizado encerrou antes dos primeiros frames. Driver do sistema restaurado.");
         }

@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.1.14 — local / not published
+
+### Português
+
+- Corrigidos os seletores de FPS, núcleos, compiladores de pipeline e modo Turnip: as instruções não escondem mais as opções de alteração.
+- FG automático evita interpolação e cópias intermediárias quando a cadência real é baixa; mantém os draws e relógios guest. O modo sempre ativo permanece disponível para comparação.
+- Corrigida a submissão do frame de origem antes de entregá-lo ao worker do FG, com proteção contra dois produtores simultâneos na apresentação.
+- Adicionado comparador A/B na mesma sessão com contadores nativos, intervalos reais, mediana/P95, screenshots e estado térmico. PanVK sem timestamps GPU é registrado como indisponível.
+- Controle experimental do heap de tiler PanVK, isolado por cache e verificação do driver; padrão original preservado. Não altera o heap de tessellation.
+- Pools de comandos ociosos limitados no Android; apenas pools com fence concluída são destruídos, liberando buffers internos do driver sem omitir draws.
+- Limite do cache de pools Vulkan exposto nas configurações (8/16/32) com o custo medido de desempenho/memória; 8 permanece padrão.
+- Encerramento Android por falta de RAM não é mais apresentado como falha de inicialização do driver personalizado.
+- A comparação preliminar no menu mostrou 6,26 → 7,05 FPS ao evitar o compute de FG. Não constitui medição de combate. Na luta, o A/B separado de pools 8/16/32 mostrou 7,27/7,33/7,57 FPS e PSS maior em ~0,55 GiB no limite 32; a diferença de ~4% não justifica mudar o padrão. PanVK não expõe timestamps GPU válidos neste aparelho, portanto tempos de fence são relatados apenas como espera de CPU.
+
+### English
+
+- Fixed FPS, CPU core, pipeline compiler and Turnip mode selectors: help text no longer hides editable choices.
+- Automatic FG bypasses interpolation and intermediate copies at low native cadence while preserving guest draws and clocks. Always-on mode remains available for comparison.
+- Submit source frames before handing them to the FG worker; prevent simultaneous presentation producers.
+- Added same-session A/B comparison with native counters, actual frame intervals, median/P95, screenshots and thermal state. Missing PanVK GPU timestamps are reported as unavailable.
+- Experimental PanVK tiler heap control is scoped to driver verification and cache identity; original driver default preserved. Tessellation heap remains unchanged.
+- Bound idle command pool reuse on Android; destroy only pools with completed fences to free driver-private buffers without dropping draws.
+- Exposed Vulkan idle pool cache limits (8/16/32) with measured performance/memory tradeoffs; 8 remains the default.
+- Android low-memory termination is no longer reported as custom-driver initialization failure.
+- Preliminary menu comparison measured 6.26 → 7.05 FPS by bypassing FG compute; this is not a combat result. Separate fight A/B for pool limits 8/16/32 measured 7.27/7.33/7.57 FPS and ~0.55 GiB higher PSS at 32; the ~4% change does not justify changing the default. PanVK exposes no valid GPU timestamps on this device, so fence durations are reported only as CPU wait.
+
 ## v0.1.13 — pré-release
 
 ### Português

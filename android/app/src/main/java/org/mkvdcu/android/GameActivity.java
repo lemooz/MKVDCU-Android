@@ -47,6 +47,8 @@ public class GameActivity extends SDLActivity {
     private long frameCursor;
     private boolean startupReported;
     private int renderAreaBenchmark = -1;
+    private int frameGenerationBenchmark = -1;
+    private int idlePoolLimitBenchmark = -1;
     private int transferAreaBenchmark = -1;
     private int presentQueueBenchmark = -1, presentPreWaitBenchmark = -1;
     private android.content.BroadcastReceiver benchmarkReceiver;
@@ -66,7 +68,7 @@ public class GameActivity extends SDLActivity {
                             ? power.getCurrentThermalStatus() : -1;
                     String actualDriver = DriverNative.identity().replace("\"", "\"\"").replace('\n', ' ');
                     performanceLog.write(android.os.SystemClock.elapsedRealtime() + "," +
-                        snapshot + ",\"" + actualDriver + "\"," + thermal + "," + displayRateRequestHz + "," + renderAreaBenchmark + "," + presentQueueBenchmark + "," + presentPreWaitBenchmark + "," + transferAreaBenchmark + "\n");
+                        snapshot + ",\"" + actualDriver + "\"," + thermal + "," + displayRateRequestHz + "," + renderAreaBenchmark + "," + presentQueueBenchmark + "," + presentPreWaitBenchmark + "," + transferAreaBenchmark + "," + frameGenerationBenchmark + "," + DriverNative.frameGenerationStats() + "," + idlePoolLimitBenchmark + "\n");
                     performanceLog.flush();
                 }
                 if (frameLog != null) {
@@ -144,6 +146,16 @@ public class GameActivity extends SDLActivity {
         if (BuildConfig.DEBUG) {
             benchmarkReceiver = new android.content.BroadcastReceiver() {
                 @Override public void onReceive(android.content.Context context, android.content.Intent intent) {
+                    if ((getPackageName() + ".DEBUG_COMMAND_POOL_LIMIT").equals(intent.getAction())) {
+                        idlePoolLimitBenchmark = Math.max(-1, Math.min(64, intent.getIntExtra("limit", -1)));
+                        DriverNative.setIdleCommandPoolLimitBenchmark(idlePoolLimitBenchmark);
+                        return;
+                    }
+                    if ((getPackageName() + ".DEBUG_FRAME_GENERATION").equals(intent.getAction())) {
+                        frameGenerationBenchmark = Math.max(-1, Math.min(1, intent.getIntExtra("mode", -1)));
+                        DriverNative.setFrameGenerationBenchmark(frameGenerationBenchmark);
+                        return;
+                    }
                     if ((getPackageName() + ".DEBUG_TRANSFER_AREA").equals(intent.getAction())) {
                         boolean enabled = intent.getBooleanExtra("enabled", false);
                         transferAreaBenchmark = enabled ? 1 : 0;
@@ -193,6 +205,8 @@ public class GameActivity extends SDLActivity {
             filter.addAction(getPackageName() + ".DEBUG_CPU_PROFILE");
             filter.addAction(getPackageName() + ".DEBUG_RENDER_EXTENTS");
             filter.addAction(getPackageName() + ".DEBUG_TRANSFER_AREA");
+            filter.addAction(getPackageName() + ".DEBUG_FRAME_GENERATION");
+            filter.addAction(getPackageName() + ".DEBUG_COMMAND_POOL_LIMIT");
             filter.addAction(getPackageName() + ".DEBUG_PRESENT_PREWAIT");
             filter.addAction(getPackageName() + ".DEBUG_PRESENT_QUEUE");
             if (android.os.Build.VERSION.SDK_INT >= 33)
@@ -217,7 +231,7 @@ public class GameActivity extends SDLActivity {
                     (getIntent().hasExtra("benchmark_spirv_optimize") ? getIntent().getBooleanExtra("benchmark_spirv_optimize", false) : "default") +
                     "; " + GraphicsSettings.summary(getIntent()) + "; sustained_active=" + sustained +
                     "; frame_probe_prepare=" + (diagnostics || BuildConfig.DEBUG) + "\n");
-            if (performanceLog != null) performanceLog.write("elapsed_ms,guest_frames,game_fps,avg_ms,median_ms,p95_ms,p99_ms,inclusive_stage_count_total_ms,actual_driver,thermal_status,display_rate_request_hz,render_area_benchmark,present_queue_benchmark,present_prewait_benchmark,transfer_area_benchmark\n");
+            if (performanceLog != null) performanceLog.write("elapsed_ms,guest_frames,game_fps,avg_ms,median_ms,p95_ms,p99_ms,inclusive_stage_count_total_ms,actual_driver,thermal_status,display_rate_request_hz,render_area_benchmark,present_queue_benchmark,present_prewait_benchmark,transfer_area_benchmark,fg_benchmark,fg_recorded_queued_accepted_rejected_bypassed,idle_pool_limit_benchmark\n");
             if (frameLog != null) frameLog.write("frame_id,interval_ms\n");
         } catch (java.io.IOException error) { Log.e(TAG, "Performance CSV", error); }
         android.view.View content = SDLActivity.getContentView();
@@ -466,6 +480,7 @@ public class GameActivity extends SDLActivity {
             performanceOverlay.setPresentationLimit(GraphicsSettings.effectiveFpsLimit(getIntent()));
         }
         DriverStore.Driver driver = new DriverStore(this).get(getIntent().getStringExtra("driver_id"));
+        driver.panvkTilerHeapMb = driver.kind.equals("panvk") ? GraphicsSettings.panvkTilerHeapMb(getIntent()) : 0;
         driver.turnipMode = driver.kind.equals("turnip") ? GraphicsSettings.turnipMode(getIntent()) : 0;
                 driver.panvkLateStencil = driver.kind.equals("panvk") && GraphicsSettings.panvkLateStencil(getIntent());
         if (!driver.usable()) throw new UnsatisfiedLinkError("Driver incompatível: " + driver.reason());

@@ -19,11 +19,13 @@ final class DriverStore {
     private final File root;
     static final class Driver {
         String id, kind, name, version, library, packageIssue = "";
-        int minApi, turnipMode;
+        int minApi, turnipMode, panvkTilerHeapMb;
         boolean panvkLateStencil, presentQueue;
         File directory;
         JSONObject metadata, report;
         String reason() {
+            if (kind.equals("panvk") && report != null && report.optInt("panvkTilerHeapMb",0) != panvkTilerHeapMb)
+                return "Heap de tiler alterado; verifique o driver novamente.";
             if (!kind.equals("system") && report != null && report.optBoolean("presentQueueRequested", false) != presentQueue)
                 return "Verifique novamente o driver com a fila de apresentação selecionada";
             if (kind.equals("panvk") && report != null && report.optBoolean("panvkLateStencil", false) != panvkLateStencil)
@@ -60,7 +62,7 @@ final class DriverStore {
             return kind.equals("system") || (packageIssue.isEmpty() && minApi <= Build.VERSION.SDK_INT && report != null &&
                 (!kind.equals("turnip") || report.optInt("turnipMode", -1) == turnipMode) &&
                 (report.optBoolean("presentQueueRequested", false) == presentQueue) &&
-                (!kind.equals("panvk") || report.optBoolean("panvkLateStencil", false) == panvkLateStencil) &&
+                (!kind.equals("panvk") || (report.optBoolean("panvkLateStencil", false) == panvkLateStencil && report.optInt("panvkTilerHeapMb",0) == panvkTilerHeapMb)) &&
                 report.optInt("probeVersion") == PROBE_VERSION &&
                 report.optInt("androidApi") == Build.VERSION.SDK_INT &&
                 report.optString("buildFingerprint").equals(Build.FINGERPRINT) && report.optBoolean("ok"));
@@ -105,6 +107,7 @@ final class DriverStore {
         d.library = meta.getString("libraryName"); d.minApi = meta.getInt("minApi");
         d.kind = GpuDriverKind.classify(d.name, meta.optString("backend"), d.library, meta.optString("vendor"));
         d.presentQueue = new GraphicsSettings(context).presentQueue();
+        d.panvkTilerHeapMb = d.kind.equals("panvk") ? new GraphicsSettings(context).panvkTilerHeapMb() : 0;
         d.panvkLateStencil = d.kind.equals("panvk") && new GraphicsSettings(context).panvkLateStencil();
         d.turnipMode = d.kind.equals("turnip") ? new GraphicsSettings(context).turnipMode() : 0;
         if (d.kind.equals("unknown")) d.packageIssue = "Backend não identificado: use um pacote PanVK, Turnip ou Qualcomm Adreno com metadados correspondentes";

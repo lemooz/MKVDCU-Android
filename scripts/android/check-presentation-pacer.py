@@ -21,6 +21,7 @@ source = r'''
 #include <atomic>
 #include <functional>
 #include <rex/ui/presentation_pacer.h>
+#include <rex/graphics/vulkan/frame_generation_cadence.h>
 uint64_t clock_ns = 0;
 int test_limit = 0, pushes = 0;
 bool accept_event = true;
@@ -52,6 +53,16 @@ struct WindowSDL {
 };
 ''' + methods + r'''
 int main() {
+ rex::graphics::vulkan::FrameGenerationCadence cadence;
+ uint64_t now=1;
+ for(int i=0;i<100;++i){now+=200000000;assert(!cadence.Update(now));}
+ for(int i=0;i<15;++i){now+=32000000;assert(!cadence.Update(now));}
+ now+=32000000;assert(cadence.Update(now));
+ now+=50000000;assert(cadence.Update(now)); // Hysteresis, no oscillation.
+ now+=50000000;assert(!cadence.Update(now));
+ for(int i=0;i<16;++i){now+=32000000;cadence.Update(now);}
+ now+=500000000;assert(!cadence.Update(now)); // Never interpolate across a long pause.
+
  for (uint32_t cap : {24u,30u,45u,60u,90u,120u}) {
   rex::ui::PresentationPacer p; p.Configure(cap);
   const uint64_t period=(1000000000ull+cap-1)/cap;
@@ -92,6 +103,44 @@ int main() {
  int paints=w.paints;w.HandlePaintEvent();assert(w.paints==paints+1);
 }
 '''
+# Compile the actual retirement loop with fake Vulkan handles. A pool may be
+# destroyed only after its submission has completed, regardless of cache limit.
+cp = (sdk/'src/graphics/vulkan/command_processor.cpp').read_text(encoding='utf8')
+start = cp.index('  // Reclaim command pools.')
+end = cp.index('  shared_memory_->CompletedSubmissionUpdated();', start)
+retire = cp[start:end]
+source = source.replace('int main() {', r'''
+#include <deque>
+#include <vector>
+struct RetiredCommand { int pool; };
+struct RetirementHarness {
+ uint64_t submission_completed_ = 0;
+ std::deque<std::pair<uint64_t,RetiredCommand>> command_buffers_submitted_;
+ std::vector<RetiredCommand> command_buffers_writable_;
+ struct FakeDriver { std::vector<int> destroyed;
+  void vkDestroyCommandPool(int,int pool,void*) { destroyed.push_back(pool); }
+ } dfn;
+ int device = 0;
+ void Reclaim() {
+''' + retire + r'''
+ }
+};
+int main() {
+ for (int limit : {0,1,8}) {
+  test_limit=limit;
+  RetirementHarness h;
+  for (int i=1;i<=20;++i) h.command_buffers_submitted_.push_back({uint64_t(i),{i}});
+  h.submission_completed_=12;h.Reclaim();
+  assert(h.command_buffers_submitted_.size()==8);
+  assert(h.command_buffers_submitted_.front().first==13);
+  assert(h.command_buffers_writable_.size()==size_t(limit ? limit : 12));
+  assert(h.dfn.destroyed.size()==size_t(limit ? 12-limit : 0));
+  for (int pool:h.dfn.destroyed) assert(pool<=12);
+  h.submission_completed_=20;h.Reclaim();
+  assert(h.command_buffers_submitted_.empty());
+  assert(h.command_buffers_writable_.size()+h.dfn.destroyed.size()==20);
+ }
+''')
 with tempfile.TemporaryDirectory(prefix='mkvdcu-pacer-') as temporary:
     directory = Path(temporary)
     file = directory/'pacer.cpp'
@@ -101,4 +150,4 @@ with tempfile.TemporaryDirectory(prefix='mkvdcu-pacer-') as temporary:
                     '/I'+str(sdk/'include'), str(file), '/Fe:'+str(binary)],
                    cwd=directory, env=env, check=True)
     subprocess.run([str(binary)], check=True)
-print('PASS 24/30/45/60/90/120 cadence, coalescing, deferred recovery, force, reentrant request and slow paint')
+print('PASS 24/30/45/60/90/120 cadence, coalescing, deferred recovery, force, reentrant request and slow paint; completed-only pool retirement')

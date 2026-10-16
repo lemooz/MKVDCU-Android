@@ -2,9 +2,19 @@
 from pathlib import Path
 import subprocess
 import tempfile
+import re
 
 root = Path(__file__).resolve().parents[2]
 jdk = Path('C:/Program Files/Android/Android Studio/jbr/bin')
+ui=(root/'android/app/src/main/java/org/mkvdcu/android/MainActivity.java').read_text(encoding='utf8')
+assert not re.search(r'new AlertDialog\.Builder\(this\)\.setTitle\([^;]*?\.setMessage\([^;]*?\.setSingleChoiceItems',ui)
+assert '"Pools Vulkan ociosos: " + graphics.idleCommandPoolLimit()' in ui
+assert re.search(r'if \(which == 27\).*?setSingleChoiceItems\(new String\[\]\{[^}]*32[^}]*\}.*?setIdleCommandPoolLimit', ui, re.S)
+swap=(root/'references/rexglue-sdk/src/graphics/vulkan/command_processor.cpp').read_text(encoding='utf8')
+swap=swap[swap.index('  const bool fg_bypass_direct'):swap.index('bool VulkanCommandProcessor::PushBufferMemoryBarrier')]
+assert swap.index('EndSubmission(true)') < swap.index('frame_generator_->Submit')
+assert 'frame_generator_->CanBypass()' in swap
+
 sources = {
 'android/content/SharedPreferences.java': '''package android.content;
 public interface SharedPreferences {
@@ -47,6 +57,7 @@ public class GraphicsHarness {
   check(args(i).contains("--vulkan_gpu_timing_interval=64"));
   check(args(i).contains("--vulkan_pipeline_creation_threads=2"));
   check(args(i).contains("--vulkan_gpu_stage_timing_interval=0"));
+  check(args(i).contains("--vulkan_idle_command_pool_limit=8"));
   check(args(i).contains("--port_gpu_ring_backoff=true"));
   check(args(i).contains("--vulkan_fragment_relaxed_precision=false"));
   check(args(i).contains("--vulkan_dxt1_compact=false"));
@@ -117,6 +128,21 @@ public class GraphicsHarness {
   check(args(compact).contains("--texture_cache_memory_limit_hard=256"));
   g.setEconomy(true);g.setFpsLimit(0);Intent economy=new Intent();g.attach(economy);
   check(args(economy).contains("--present_frame_rate_limit=30"));
+  check(g.panvkTilerHeapMb()==0);
+  g.setPanvkTilerHeapMb(128);Intent heap=new Intent();g.attach(heap);
+  check(GraphicsSettings.panvkTilerHeapMb(heap)==128);
+  g.setPanvkTilerHeapMb(256);check(GraphicsSettings.panvkTilerHeapMb(heap)==128);
+  g.setPanvkTilerHeapMb(1);check(g.panvkTilerHeapMb()==0);
+  g.setIdleCommandPoolLimit(32);Intent pool32=new Intent();g.attach(pool32);
+  check(args(pool32).contains("--vulkan_idle_command_pool_limit=32"));
+  check(args(i).contains("--vulkan_idle_command_pool_limit=8")); // immutable session snapshot
+  g.setIdleCommandPoolLimit(17);check(g.idleCommandPoolLimit()==8);
+  check(g.frameGenerationAdaptive());
+  g.setFrameGenerationAdaptive(false);Intent forcedFg=new Intent();g.attach(forcedFg);
+  check(args(forcedFg).contains("--gpu_frame_generation_adaptive=false"));
+  g.setFrameGenerationAdaptive(true);Intent autoFg=new Intent();g.attach(autoFg);
+  check(args(autoFg).contains("--gpu_frame_generation_adaptive=true"));
+  check(args(forcedFg).contains("--gpu_frame_generation_adaptive=false"));
   g.setEconomy(false);
   check(java.util.Arrays.equals(GraphicsSettings.FPS_LIMITS,new int[]{0,24,30,45,60,90,120}));
   for(int cap:GraphicsSettings.FPS_LIMITS) {
@@ -137,6 +163,7 @@ public class GraphicsHarness {
   check(g.ringBackoff()&&!g.relaxedFragment()&&!g.compactDxt1());
   check(!g.batch()&&g.videoMode()==0&&g.gpuTiming()==64);
   check(g.pipelineThreads()==-1&&!g.gpuStages());
+  check(g.idleCommandPoolLimit()==8);
   check(GraphicsSettings.summary(i).contains("requested_internal="));
  }
 }'''

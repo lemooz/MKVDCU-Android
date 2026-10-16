@@ -19,6 +19,10 @@ final class DriverNative {
     static native String probe(Surface surface);
     static native String identity();
     static native long presentCount();
+    static native String configurePanvkTilerHeap(int megabytes);
+    static native void setFrameGenerationBenchmark(int mode);
+    static native void setIdleCommandPoolLimitBenchmark(int limit);
+    static native String frameGenerationStats();
     static native String configureCpuLimit(int cores, boolean economy);
     static native void setDiagnosticMode(boolean enabled);
     static native void armCapture();
@@ -39,6 +43,8 @@ final class DriverNative {
         String[] dependencies;
         try { dependencies = driver.kind.equals("system") ? new String[0] : ElfDriver.loadOrder(driver.directory, driver.library); }
         catch (java.io.IOException error) { return error.getMessage(); }
+        String heapError = configurePanvkTilerHeap(driver.kind.equals("panvk") ? driver.panvkTilerHeapMb : 0);
+        if (!heapError.isEmpty()) return heapError;
         return configure(driver.kind, driver.directory.getAbsolutePath(), driver.library,
                 context.getApplicationInfo().nativeLibraryDir, temporary.getAbsolutePath(), driver.id,
                 cache.getAbsolutePath(), dependencies,

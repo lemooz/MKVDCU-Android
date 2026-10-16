@@ -23,13 +23,14 @@ class GraphicsSettings {
  static boolean economy(Intent i){return false;}
  static int effectiveFpsLimit(Intent i){return 30;}
  static int turnipMode(Intent i){return 0;}
+ static int panvkTilerHeapMb(Intent i){return 0;}
  static boolean panvkLateStencil(Intent i){return false;}
 }
 class DriverStore {
  DriverStore(Object context){}
  Driver get(String id){return new Driver();}
  static class Driver {
-  String kind="system";int turnipMode;boolean panvkLateStencil;
+  String kind="system";int turnipMode,panvkTilerHeapMb;boolean panvkLateStencil;
   boolean usable(){return true;}String reason(){return "";}
  }
 }

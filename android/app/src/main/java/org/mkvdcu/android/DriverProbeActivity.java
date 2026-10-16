@@ -43,7 +43,8 @@ public final class DriverProbeActivity extends Activity implements SurfaceHolder
                     }
                 };
                 DriverStore.Driver driver = new DriverStore(this).get(getIntent().getStringExtra("driver_id"));
-                driver.turnipMode = driver.kind.equals("turnip") ? GraphicsSettings.turnipMode(getIntent()) : 0;
+                driver.panvkTilerHeapMb = driver.kind.equals("panvk") ? GraphicsSettings.panvkTilerHeapMb(getIntent()) : 0;
+        driver.turnipMode = driver.kind.equals("turnip") ? GraphicsSettings.turnipMode(getIntent()) : 0;
                 driver.panvkLateStencil = driver.kind.equals("panvk") && GraphicsSettings.panvkLateStencil(getIntent());
                 String error = DriverNative.configure(this, driver);
                 if (!error.isEmpty()) throw new IllegalStateException(error);
@@ -60,7 +61,7 @@ public final class DriverProbeActivity extends Activity implements SurfaceHolder
     }
     private void finishResult(String report) {
         if (isFinishing()) return;
-        try { report = new JSONObject(report).put("turnipMode", GraphicsSettings.turnipMode(getIntent())).put("panvkLateStencil", GraphicsSettings.panvkLateStencil(getIntent())).put("presentQueueRequested", getIntent().getBooleanExtra("graphics_present_queue", false)).toString(); }
+        try { report = new JSONObject(report).put("turnipMode", GraphicsSettings.turnipMode(getIntent())).put("panvkLateStencil", GraphicsSettings.panvkLateStencil(getIntent())).put("panvkTilerHeapMb", GraphicsSettings.panvkTilerHeapMb(getIntent())).put("presentQueueRequested", getIntent().getBooleanExtra("graphics_present_queue", false)).toString(); }
         catch (Exception ignored) { }
         handler.removeCallbacksAndMessages(null);
         setResult(RESULT_OK, new Intent().putExtra("driver_report", report));
