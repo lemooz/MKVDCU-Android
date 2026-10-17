@@ -9,7 +9,7 @@ jdk = Path('C:/Program Files/Android/Android Studio/jbr/bin')
 ui=(root/'android/app/src/main/java/org/mkvdcu/android/MainActivity.java').read_text(encoding='utf8')
 settings=(root/'android/app/src/main/java/org/mkvdcu/android/GraphicsSettings.java').read_text(encoding='utf8')
 assert 'Desempenho Mali — alvo 30 FPS' in settings
-assert 'O limitador atua só na apresentação' in settings
+assert 'O limitador não pausa o XE_SWAP nem muda o relógio do jogo' in settings
 assert 'Mantém um limite menor, como 24 FPS, se você o selecionou' in ui
 assert 'não pausa o XE_SWAP nem altera o relógio guest' in ui
 assert not re.search(r'new AlertDialog\.Builder\(this\)\.setTitle\([^;]*?\.setMessage\([^;]*?\.setSingleChoiceItems',ui)
@@ -120,7 +120,7 @@ public class GraphicsHarness {
   check(g.activePreset()==GraphicsSettings.PRESET_LOW&&g.presetName().contains("Desempenho Mali"));
   Intent pLow=new Intent();g.attach(pLow);
   check(args(pLow).contains("--port_gpu_ring_backoff=true"));
-  check(args(pLow).contains("--vulkan_fragment_relaxed_precision=false")&&args(pLow).contains("--vulkan_dxt1_compact=false"));
+  check(args(pLow).contains("--vulkan_fragment_relaxed_precision=true")&&args(pLow).contains("--vulkan_dxt1_compact=true"));
   check(args(pLow).contains("--anisotropic_override=0"));
   check(args(pLow).contains("--texture_cache_memory_limit_hard=512"));
   check(args(pLow).contains("--vulkan_submit_on_primary_buffer_end=false"));

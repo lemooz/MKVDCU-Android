@@ -84,3 +84,7 @@ The package has not yet received device validation. Attach the versioned Release
 versionName `0.1.16`, versionCode `16`. Adds Vulkan presentation frame skip (1–3 skipped presentations) without dropping guest draws or simulation steps; renames the low-cost preset to Mali Performance with a 30 FPS presentation target; and adds regression checks that Android `XE_SWAP` remains unpaced and the guest clock starts at scale 1.0. A 30 FPS target is not a device performance guarantee. The build includes the previously local v0.1.15 frame-skip changes. No new physical device validation is claimed.
 
 Release APK and SHA-256 sidecar are attached to the GitHub prerelease; native library provenance verification passed.
+
+## v0.1.17 prerelease
+
+versionName `0.1.17`, versionCode `17`. Adds configurable final Presenter FXAA and groups compact DXT1 decoding and fragment RelaxedPrecision into the Mali Performance preset, alongside its low-cost filtering/mip settings. GPU ring polling starts its progressive backoff earlier while preserving commands. These settings may affect visual quality; performance and stability gains are not claimed without device measurements. Local ARM64/Vulkan checks pass; physical ISO/game validation remains pending.

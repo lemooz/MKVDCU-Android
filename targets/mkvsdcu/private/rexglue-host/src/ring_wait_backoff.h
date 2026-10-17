@@ -14,9 +14,9 @@ class Backoff {
       read_pointer_ = read_pointer;
     }
     last_us_ = now_us;
-    if (attempts_ < 20) ++attempts_;
-    if (attempts_ <= 16) return 0;
-    return attempts_ == 17 ? 50 : attempts_ == 18 ? 100 : attempts_ == 19 ? 200 : 400;
+    if (attempts_ < 10) ++attempts_;
+    if (attempts_ <= 4) return 0;
+    return attempts_ == 5 ? 20 : attempts_ == 6 ? 50 : attempts_ == 7 ? 100 : 200;
   }
  private:
   bool initialized_ = false;

@@ -338,7 +338,8 @@ public class MainActivity extends Activity {
             "Texturas DXT1 em 16 bits experimental: " + (graphics.compactDxt1() ? "ativadas" : "desativadas"),
             "Heap de tiler PanVK: " + (graphics.panvkTilerHeapMb()==0 ? "padrão do driver" : graphics.panvkTilerHeapMb()+" MiB"),
             "Pools Vulkan ociosos: " + graphics.idleCommandPoolLimit(),
-            "Pulo de quadros da apresentação: " + graphics.frameSkip()};
+            "Pulo de quadros da apresentação: " + graphics.frameSkip(),
+            "FXAA do Presenter: " + GraphicsSettings.PRESENTER_EFFECT_NAMES[graphics.presenterEffect()]};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) showPresetDialog();
@@ -499,16 +500,23 @@ public class MainActivity extends Activity {
                             graphics.setFrameSkip(GraphicsSettings.FRAME_SKIP_VALUES[w]); d.dismiss(); showGraphicsSettings();
                         }).setNegativeButton("Cancelar", null).show();
                 }
+                if (which == 29) {
+                    graphicsChoiceDialog("Anti-aliasing do Presenter — próxima sessão",
+                        "Desativado evita o passe FXAA do próprio Presenter e é a opção de menor custo. FXAA e FXAA extremo só suavizam a imagem final. Isto não desativa sombras, bloom, profundidade de campo ou outros efeitos internos da UE3. Esses recursos são controlados pelo jogo e ainda não há um caminho de configuração comprovado para esta versão Xbox 360.")
+                        .setSingleChoiceItems(GraphicsSettings.PRESENTER_EFFECT_NAMES, graphics.presenterEffect(), (d, w) -> {
+                            graphics.setPresenterEffect(GraphicsSettings.PRESENTER_EFFECTS[w]); d.dismiss(); showGraphicsSettings();
+                        }).setNegativeButton("Cancelar", null).show();
+                }
                 if (which == 23) new AlertDialog.Builder(this).setTitle("Espera econômica do ring GPU")
                     .setMessage("Quando a GPU não libera espaço no ring, o thread do jogo espera de 50 a 400 µs após 16 consultas sem progresso. O atraso é reiniciado quando a GPU avança. Preserva os comandos e o watchdog do jogo; não limita XE_SWAP nem a simulação. Pode reduzir CPU e aquecimento; o resultado depende do aparelho. Exige nova sessão.")
                     .setPositiveButton(graphics.ringBackoff() ? "Desativar para comparar" : "Ativar",(d,w)->{graphics.setRingBackoff(!graphics.ringBackoff());showGraphicsSettings();})
                     .setNegativeButton("Cancelar",null).show();
                 if (which == 24) new AlertDialog.Builder(this).setTitle("Precisão reduzida — experimental")
-                    .setMessage("Permite RelaxedPrecision em operações saturadas do pixel shader. Mantém vértices, depth, exports de memória e constantes em precisão original. O driver pode usar FP16 ou manter FP32; ganho não é garantido e cores podem mudar. Usa cache próprio para evitar misturar shaders de precisão diferente. Padrão desativado. Exige nova sessão.")
+                    .setMessage("Permite RelaxedPrecision em operações saturadas do pixel shader. Mantém vértices, depth, exports de memória e constantes em precisão original. O driver pode usar FP16 ou manter FP32; ganho não é garantido e cores podem mudar. Usa cache próprio para evitar misturar shaders de precisão diferente. Desativado no padrão equilibrado; o preset Desempenho Mali o ativa. Exige nova sessão.")
                     .setPositiveButton(graphics.relaxedFragment() ? "Desativar" : "Ativar para comparar",(d,w)->{graphics.setRelaxedFragment(!graphics.relaxedFragment());showGraphicsSettings();})
                     .setNegativeButton("Cancelar",null).show();
                 if (which == 25) new AlertDialog.Builder(this).setTitle("Texturas DXT1 em 16 bits — experimental")
-                    .setMessage("Em GPUs sem BC1 nativo, decodifica DXT1 para RGB5A1: 2 bytes por texel em vez de 4. Preserva a máscara de transparência de 1 bit, reduz precisão RGB e pode causar banding. DXT3/DXT5, texturas nativas BC1 e memória guest permanecem no formato original. Usa RGBA8 se o formato compacto não for suportado. Padrão desativado. Exige nova sessão.")
+                    .setMessage("Em GPUs sem BC1 nativo, decodifica DXT1 para RGB5A1: 2 bytes por texel em vez de 4. Preserva a máscara de transparência de 1 bit, reduz precisão RGB e pode causar banding. DXT3/DXT5, texturas nativas BC1 e memória guest permanecem no formato original. Usa RGBA8 se o formato compacto não for suportado. Desativado no padrão equilibrado; o preset Desempenho Mali o ativa. Exige nova sessão.")
                     .setPositiveButton(graphics.compactDxt1() ? "Desativar" : "Ativar para comparar",(d,w)->{graphics.setCompactDxt1(!graphics.compactDxt1());showGraphicsSettings();})
                     .setNegativeButton("Cancelar",null).show();
                 if (which == 15) new AlertDialog.Builder(this).setTitle("PanVK — próxima sessão")

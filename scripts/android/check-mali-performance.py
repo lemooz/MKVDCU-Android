@@ -22,16 +22,16 @@ with tempfile.TemporaryDirectory(prefix='mkvdcu-mali-regression-') as temporary:
 #include "targets/mkvsdcu/private/rexglue-host/src/ring_wait_backoff.h"
 int main() {
   ring_wait::Backoff b;
-  for (int i=0;i<16;++i) assert(b.DelayMicroseconds(128, i)==0);
-  assert(b.DelayMicroseconds(128,16)==50);
-  assert(b.DelayMicroseconds(128,66)==100);
-  assert(b.DelayMicroseconds(128,166)==200);
-  assert(b.DelayMicroseconds(128,366)==400);
-  for (int i=1;i<=100;++i) assert(b.DelayMicroseconds(128,366+i*400)==400);
-  assert(b.DelayMicroseconds(132,40367)==0); // GPU read-pointer progress
-  for (int i=1;i<16;++i) assert(b.DelayMicroseconds(132,40367+i)==0);
-  assert(b.DelayMicroseconds(132,40383)==50);
-  assert(b.DelayMicroseconds(132,50000)==0); // a new polling burst
+  for (int i=0;i<4;++i) assert(b.DelayMicroseconds(128, i)==0);
+  assert(b.DelayMicroseconds(128,4)==20);
+  assert(b.DelayMicroseconds(128,24)==50);
+  assert(b.DelayMicroseconds(128,74)==100);
+  assert(b.DelayMicroseconds(128,174)==200);
+  for (int i=1;i<=100;++i) assert(b.DelayMicroseconds(128,174+i*200)==200);
+  assert(b.DelayMicroseconds(132,20175)==0); // GPU read-pointer progress
+  for (int i=1;i<4;++i) assert(b.DelayMicroseconds(132,20175+i)==0);
+  assert(b.DelayMicroseconds(132,20179)==20);
+  assert(b.DelayMicroseconds(132,23000)==0); // a new polling burst
 }''')
     for name, file in [('backoff', source), ('compact-texture', root/'scripts/android/compact-texture-vulkan-test.cpp')]:
         binary = directory/(name+'.exe')

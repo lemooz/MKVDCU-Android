@@ -23,6 +23,8 @@ final class GraphicsSettings {
     static final int[] FRAME_SKIP_VALUES = {0, 1, 2, 3};
     static final int[] IDLE_COMMAND_POOL_LIMITS = {8, 16, 32};
     static final int[] FRAME_GENERATION_FACTORS = {2, 3, 4};
+    static final int[] PRESENTER_EFFECTS = {0, 1, 2};
+    static final String[] PRESENTER_EFFECT_NAMES = {"Desativado", "FXAA", "FXAA extremo"};
 
     static final int PRESET_LOW = 0;
     static final int PRESET_BALANCED = 1;
@@ -33,7 +35,7 @@ final class GraphicsSettings {
         "Alto — qualidade"
     };
     static final String[] PRESET_DESCRIPTIONS = {
-        "Cena solicitada 0,5× (520×312), saída 720p, mip DXT +1, cache 256/512 MiB, submissões agrupadas e alvo de apresentação 30 FPS. O limitador atua só na apresentação; não pausa o XE_SWAP nem muda a escala do relógio do jogo.",
+        "Desempenho agressivo: cena 0,5× (520×312), FXAA desligado, filtragem anisotrópica desligada, mip DXT +1, DXT1 compacto RGB5A1 e RelaxedPrecision. Pode suavizar detalhes e alterar cores; fallback preserva RGBA8 quando RGB5A1 não é suportado. Não altera sombras internas da UE3. Cache 256/512 MiB, submissões agrupadas e alvo de apresentação 30 FPS. O limitador não pausa o XE_SWAP nem muda o relógio do jogo.",
         "Cena solicitada 0,75× (780×468), saída 720p, texturas originais, cache 384/768 MiB, submissões agrupadas e limite de saída 60 FPS. Escala experimental; não limita a simulação do jogo.",
         "Cena nativa 1040×624, saída 720p, texturas originais, filtragem 2×, cache 768/1536 MiB e limite de saída 60 FPS. Maior uso de RAM."
     };
@@ -69,8 +71,9 @@ final class GraphicsSettings {
             .putBoolean(PREFIX + "frame_generation", false)
             .putInt(PREFIX + "frame_generation_factor", 2)
             .putBoolean(PREFIX + "ring_backoff", true)
-            .putBoolean(PREFIX + "relaxed_fragment", false)
-            .putBoolean(PREFIX + "compact_dxt1", false)
+            .putBoolean(PREFIX + "relaxed_fragment", low)
+            .putBoolean(PREFIX + "compact_dxt1", low)
+            .putInt(PREFIX + "presenter_effect", 0)
             .putInt(PREFIX + "fps_limit", low ? 30 : 60)
             .putInt(PREFIX + "pipeline_threads", -1)
             .putInt(PREFIX + "video_mode", 0)
@@ -129,6 +132,9 @@ final class GraphicsSettings {
     void setRelaxedFragment(boolean value) { editCustom().putBoolean(PREFIX + "relaxed_fragment", value).apply(); }
     boolean compactDxt1() { return prefs.getBoolean(PREFIX + "compact_dxt1", false); }
     void setCompactDxt1(boolean value) { editCustom().putBoolean(PREFIX + "compact_dxt1", value).apply(); }
+    int presenterEffect() { return allowed(prefs.getInt(PREFIX + "presenter_effect", 0), PRESENTER_EFFECTS, 0); }
+    void setPresenterEffect(int value) { editCustom().putInt(PREFIX + "presenter_effect", allowed(value, PRESENTER_EFFECTS, 0)).apply(); }
+    static int presenterEffect(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "presenter_effect", 0), PRESENTER_EFFECTS, 0); }
     static int cores(Intent intent) { return clampCores(intent.getIntExtra(PREFIX + "cpu_cores", 0)); }
     static boolean economy(Intent intent) { return intent.getBooleanExtra(PREFIX + "economy", false); }
     static int effectiveFpsLimit(Intent intent) {
@@ -190,6 +196,7 @@ final class GraphicsSettings {
             .remove(PREFIX + "frame_skip")
             .remove(PREFIX + "frame_generation").remove(PREFIX + "frame_generation_adaptive").remove(PREFIX + "frame_generation_factor").remove(PREFIX + "panvk_tiler_heap_mb")
             .remove(PREFIX + "ring_backoff").remove(PREFIX + "relaxed_fragment").remove(PREFIX + "compact_dxt1")
+            .remove(PREFIX + "presenter_effect")
             .remove(PREFIX + "idle_command_pool_limit")
             .remove(PREFIX + "active_preset").apply();
     }
@@ -209,6 +216,7 @@ final class GraphicsSettings {
             .putExtra(PREFIX + "ring_backoff", ringBackoff())
             .putExtra(PREFIX + "relaxed_fragment", relaxedFragment())
             .putExtra(PREFIX + "compact_dxt1", compactDxt1())
+            .putExtra(PREFIX + "presenter_effect", presenterEffect())
             .putExtra(PREFIX + "idle_command_pool_limit", idleCommandPoolLimit());
     }
     static boolean sustained(Intent intent) { return intent.getBooleanExtra(PREFIX + "sustained", false); }
@@ -229,6 +237,8 @@ final class GraphicsSettings {
         args.add("--port_gpu_ring_backoff=" + intent.getBooleanExtra(PREFIX + "ring_backoff", true));
         args.add("--vulkan_fragment_relaxed_precision=" + intent.getBooleanExtra(PREFIX + "relaxed_fragment", false));
         args.add("--vulkan_dxt1_compact=" + intent.getBooleanExtra(PREFIX + "compact_dxt1", false));
+        int presenterEffect = presenterEffect(intent);
+        args.add("--swap_post_effect=" + (presenterEffect == 2 ? "fxaa_extreme" : presenterEffect == 1 ? "fxaa" : "none"));
         args.add("--port_internal_resolution_percent=100");
         args.add("--port_scene_resolution_percent=" + scalePercent(intent));
         args.add("--texture_cache_memory_limit_soft_lifetime=" + (compact ? 5 : 30));

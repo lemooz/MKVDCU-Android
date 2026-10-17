@@ -1,4 +1,21 @@
 # Changelog
+## v0.1.17 — pré-release
+
+### Português
+
+- O preset Desempenho Mali agora reúne opções experimentais de menor custo: FXAA do Presenter desligado, filtragem anisotrópica desligada, mip drop DXT1, decodificação DXT1 compacta RGB5A1 e RelaxedPrecision. As duas últimas podem reduzir qualidade/cor e mantêm fallback quando o formato compacto não é suportado.
+- Adicionada seleção do efeito FXAA no Presenter (desativado, FXAA e FXAA extremo); isso afeta apenas o passe final e não desativa efeitos internos da UE3.
+- Reduzido o backoff inicial do ring GPU para começar após quatro consultas sem progresso. A mudança preserva os comandos, mas ainda precisa de medição física de desempenho e estabilidade.
+- Corrigido o verificador local de configurações para acompanhar a descrição atual do preset.
+- Build e regressões locais ARM64/Vulkan; teste em aparelho e leitura da ISO ainda pendentes.
+
+### English
+
+- The Mali Performance preset now groups experimental lower-cost options: Presenter FXAA off, anisotropic filtering off, DXT1 mip drop, compact RGB5A1 DXT1 decoding, and RelaxedPrecision. The latter options may reduce color/visual quality and retain a fallback when the compact format is unsupported.
+- Added a Presenter FXAA selector (off, FXAA, and extreme FXAA); it affects only the final presentation pass and does not disable UE3 internal effects.
+- Shortened the GPU ring backoff so it begins after four no-progress polls. Commands are preserved, but physical performance and stability measurements remain pending.
+- Updated the local graphics-settings regression check to match the current preset description.
+- Local ARM64/Vulkan build and regression checks; device testing and ISO inspection remain pending.
 
 ## v0.1.16 — local / not published
 
