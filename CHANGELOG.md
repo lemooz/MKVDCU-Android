@@ -1,4 +1,22 @@
 # Changelog
+## v0.1.18 — pré-release
+
+### Português
+
+- Inspecionada a `Coalesced.ini` da ISO do jogo; foi confirmado que `Xe-MK8Engine.ini` habilita Branching PCF qualidade 4 e permite mapas de sombra de até 1024/2048 px, enquanto o arquivo solto procurado pelo jogo não existia.
+- Adicionado override UE3 opcional, derivado desses valores da ISO, que desativa Branching PCF e limita mapas de sombra a 256/512 px. O preset Desempenho Mali ativa o override; demais presets e configurações padrão deixam-no desativado. O arquivo entra pelo overlay VFS antes do início do XEX, sem suprimir draws ou resolves.
+- Adicionada opção manual para ativar/desativar o patch. No Galaxy A54, o log confirmou `Mod loaded` e duas aberturas de `D:\Config\Xe-MK8Engine.ini` sem erro.
+- Captura física anterior da luta no Galaxy A54 (Mali-G68, driver do sistema): HUD observou 4 FPS de jogo, 3 FPS de saída e 206,8 ms por quadro, com ~57 ms de submissão GPU. Essa captura usava 0,5×, frame generation forçada e pulo de quadros; não serve como A/B do override. Após aplicá-lo, a nova sessão abriu a configuração e chegou a Press Start (15–19 FPS, ~49–62 ms/frame no logo), sem repetir ainda a mesma luta. Nenhum ganho de combate é reivindicado.
+- Com o override ativo, uma sessão posterior chegou à introdução da luta e renderizou os dois lutadores (8 FPS de jogo, 3 FPS de saída, 142,9 ms/frame, ~72,6 ms de submissão GPU). A luta/cena e as opções de geração de quadros diferiam da captura anterior; isso não comprova ganho de FPS. O filtro vermelho persiste.
+
+### English
+
+- Inspected the game's ISO `Coalesced.ini`; `Xe-MK8Engine.ini` enables Branching PCF quality 4 and allows shadow maps up to 1024/2048 px, while the loose file requested by the game was absent.
+- Added an optional UE3 override derived from those ISO values. It disables Branching PCF and caps shadow maps at 256/512 px. The Mali Performance preset enables it; other presets and default settings leave it disabled. The file is mounted through the VFS mod overlay before the XEX starts, without suppressing draws or resolves.
+- Added a manual enable/disable option. On the Galaxy A54, logs confirmed `Mod loaded` and two successful opens of `D:\Config\Xe-MK8Engine.ini`.
+- Physical Galaxy A54 (Mali-G68, system driver) fight capture: HUD showed 4 game FPS, 3 output FPS, 206.8 ms per frame and about 57 ms GPU submission. The session used 0.5×, forced frame generation and frame skipping, so this is an observed reference, not an isolated A/B result. The red tint remains visible.
+- With the override enabled, a subsequent session reached the fight intro and rendered both fighters (8 game FPS, 3 output FPS, 142.9 ms/frame, ~72.6 ms GPU submission). The matchup/scene and frame-generation settings differed from the earlier capture, so this does not establish an FPS gain. Red tint persists.
+
 ## v0.1.17 — pré-release
 
 ### Português

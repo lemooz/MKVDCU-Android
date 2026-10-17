@@ -35,7 +35,7 @@ final class GraphicsSettings {
         "Alto — qualidade"
     };
     static final String[] PRESET_DESCRIPTIONS = {
-        "Desempenho agressivo: cena 0,5× (520×312), FXAA desligado, filtragem anisotrópica desligada, mip DXT +1, DXT1 compacto RGB5A1 e RelaxedPrecision. Pode suavizar detalhes e alterar cores; fallback preserva RGBA8 quando RGB5A1 não é suportado. Não altera sombras internas da UE3. Cache 256/512 MiB, submissões agrupadas e alvo de apresentação 30 FPS. O limitador não pausa o XE_SWAP nem muda o relógio do jogo.",
+        "Desempenho agressivo: cena 0,5× (520×312), FXAA e filtragem anisotrópica desligados, mip DXT +1, DXT1 compacto RGB5A1, RelaxedPrecision e override UE3 derivado da ISO que reduz Branching PCF e mapas de sombra. Pode reduzir detalhes, sombras e alterar cores; formatos sem suporte mantêm fallback. Cache 256/512 MiB, submissões agrupadas e alvo de apresentação 30 FPS. O limitador não pausa o XE_SWAP nem muda o relógio do jogo.",
         "Cena solicitada 0,75× (780×468), saída 720p, texturas originais, cache 384/768 MiB, submissões agrupadas e limite de saída 60 FPS. Escala experimental; não limita a simulação do jogo.",
         "Cena nativa 1040×624, saída 720p, texturas originais, filtragem 2×, cache 768/1536 MiB e limite de saída 60 FPS. Maior uso de RAM."
     };
@@ -73,6 +73,7 @@ final class GraphicsSettings {
             .putBoolean(PREFIX + "ring_backoff", true)
             .putBoolean(PREFIX + "relaxed_fragment", low)
             .putBoolean(PREFIX + "compact_dxt1", low)
+            .putBoolean(PREFIX + "ue3_performance_patch", low)
             .putInt(PREFIX + "presenter_effect", 0)
             .putInt(PREFIX + "fps_limit", low ? 30 : 60)
             .putInt(PREFIX + "pipeline_threads", -1)
@@ -132,6 +133,9 @@ final class GraphicsSettings {
     void setRelaxedFragment(boolean value) { editCustom().putBoolean(PREFIX + "relaxed_fragment", value).apply(); }
     boolean compactDxt1() { return prefs.getBoolean(PREFIX + "compact_dxt1", false); }
     void setCompactDxt1(boolean value) { editCustom().putBoolean(PREFIX + "compact_dxt1", value).apply(); }
+    boolean ue3PerformancePatch() { return prefs.getBoolean(PREFIX + "ue3_performance_patch", false); }
+    void setUe3PerformancePatch(boolean value) { editCustom().putBoolean(PREFIX + "ue3_performance_patch", value).apply(); }
+    static boolean ue3PerformancePatch(Intent intent) { return intent.getBooleanExtra(PREFIX + "ue3_performance_patch", false); }
     int presenterEffect() { return allowed(prefs.getInt(PREFIX + "presenter_effect", 0), PRESENTER_EFFECTS, 0); }
     void setPresenterEffect(int value) { editCustom().putInt(PREFIX + "presenter_effect", allowed(value, PRESENTER_EFFECTS, 0)).apply(); }
     static int presenterEffect(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "presenter_effect", 0), PRESENTER_EFFECTS, 0); }
@@ -197,6 +201,7 @@ final class GraphicsSettings {
             .remove(PREFIX + "frame_generation").remove(PREFIX + "frame_generation_adaptive").remove(PREFIX + "frame_generation_factor").remove(PREFIX + "panvk_tiler_heap_mb")
             .remove(PREFIX + "ring_backoff").remove(PREFIX + "relaxed_fragment").remove(PREFIX + "compact_dxt1")
             .remove(PREFIX + "presenter_effect")
+            .remove(PREFIX + "ue3_performance_patch")
             .remove(PREFIX + "idle_command_pool_limit")
             .remove(PREFIX + "active_preset").apply();
     }
@@ -217,6 +222,7 @@ final class GraphicsSettings {
             .putExtra(PREFIX + "relaxed_fragment", relaxedFragment())
             .putExtra(PREFIX + "compact_dxt1", compactDxt1())
             .putExtra(PREFIX + "presenter_effect", presenterEffect())
+            .putExtra(PREFIX + "ue3_performance_patch", ue3PerformancePatch())
             .putExtra(PREFIX + "idle_command_pool_limit", idleCommandPoolLimit());
     }
     static boolean sustained(Intent intent) { return intent.getBooleanExtra(PREFIX + "sustained", false); }

@@ -128,17 +128,21 @@ public class GraphicsHarness {
   check(args(pLow).contains("--port_scene_resolution_percent=50"));
   check(args(pLow).contains("--port_internal_resolution_percent=100"));
   check(args(pLow).contains("--present_frame_rate_limit=30"));
+  check(g.ue3PerformancePatch());
+  check(GraphicsSettings.ue3PerformancePatch(pLow));
   check(GraphicsSettings.scaleDescription(pLow).contains("520×312"));
   check(!args(pLow).stream().anyMatch(s->s.contains("disable_shadow")||s.contains("fast_postprocess")));
   g.applyPreset(GraphicsSettings.PRESET_HIGH);
   check(g.activePreset()==GraphicsSettings.PRESET_HIGH&&g.presetName().contains("Alto"));
   Intent pHigh=new Intent();g.attach(pHigh);
+  check(!GraphicsSettings.ue3PerformancePatch(pHigh));
   check(args(pHigh).contains("--anisotropic_override=2"));
   check(args(pHigh).contains("--texture_cache_memory_limit_hard=1536"));
   check(args(pHigh).contains("--vulkan_spirv_optimize=true"));
   g.applyPreset(GraphicsSettings.PRESET_BALANCED);
   check(g.activePreset()==GraphicsSettings.PRESET_BALANCED);
   Intent pBalanced=new Intent();g.attach(pBalanced);
+  check(!GraphicsSettings.ue3PerformancePatch(pBalanced));
   check(args(pBalanced).contains("--port_scene_resolution_percent=75"));
   check(GraphicsSettings.scaleDescription(pBalanced).contains("780×468"));
   check(g.turnipMode()==2&&g.panvkLateStencil()); // Presets preserve driver choices.

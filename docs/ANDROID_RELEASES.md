@@ -88,3 +88,7 @@ Release APK and SHA-256 sidecar are attached to the GitHub prerelease; native li
 ## v0.1.17 prerelease
 
 versionName `0.1.17`, versionCode `17`. Adds configurable final Presenter FXAA and groups compact DXT1 decoding and fragment RelaxedPrecision into the Mali Performance preset, alongside its low-cost filtering/mip settings. GPU ring polling starts its progressive backoff earlier while preserving commands. These settings may affect visual quality; performance and stability gains are not claimed without device measurements. Local ARM64/Vulkan checks pass; physical ISO/game validation remains pending.
+
+## v0.1.18 prerelease
+
+versionName `0.1.18`, versionCode `18`. Uses the game ISO's `Coalesced.ini` to construct an optional UE3 low-shadow override (`BranchingPCFShadows=False`, lower PCF quality, 256/512 px shadow caps). The Mali Performance preset enables it; the balanced/high presets leave it disabled, and the launcher exposes a manual toggle. It is mounted through the game's existing VFS mod overlay before XEX startup. On the Galaxy A54, logs confirmed `Mod loaded` and successful opens of `D:\Config\Xe-MK8Engine.ini`; the title reached Press Start (15–19 FPS, ~49–62 ms/frame in the logo scene) and later rendered the fight intro (8 game FPS, 3 output FPS, 142.9 ms/frame, ~72.6 ms GPU submission). The earlier fight capture showed 4 game FPS and had forced 2× frame generation active; matchup and settings differed, so no combat FPS gain is claimed. A red tint remains visible.

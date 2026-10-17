@@ -6,7 +6,7 @@ An early Android ARM64 port of **Mortal Kombat vs. DC Universe**, built on the o
 
 ## Current prerelease
 
-Download **[MKVDCU Android v0.1.17](https://github.com/lemooz/MKVDCU-Android/releases/tag/v0.1.17)** from Releases. This experimental prerelease includes UE3 scene-buffer scaling (0.5×/0.75×), graphics presets, presentation frame skip and a Mali performance preset targeting 30 FPS output. The presentation cap does not wait in guest `XE_SWAP` or change the guest clock, so it does not itself slow game simulation; it also cannot guarantee that the device renders every scene at 30 FPS. Scene scaling, frame skip and performance remain experimental, with no new physical validation in this version. The APK is ARM64 (`arm64-v8a`) and requires Android 9 or later with Vulkan 1.1 support. It does not include game data; provide your own legally obtained copy.
+Download **[MKVDCU Android v0.1.18](https://github.com/lemooz/MKVDCU-Android/releases/tag/v0.1.18)** from Releases. This experimental prerelease includes an optional ISO-derived UE3 lower-shadow configuration, enabled by the Mali Performance preset and controlled by a launcher toggle. VFS injection is confirmed on a Galaxy A54; combat FPS improvement is not yet measured. Current fight captures show low FPS and a red tint; scene scaling and frame skip remain experimental. The APK is ARM64 (`arm64-v8a`) and requires Android 9 or later with Vulkan 1.1 support. It does not include game data; provide your own legally obtained copy.
 
 ### Tested devices
 
@@ -23,7 +23,7 @@ The app can import Vulkan driver packages and includes **partial, experimental s
 
 ## Install and play
 
-1. Download the normal APK from the [current prerelease](https://github.com/lemooz/MKVDCU-Android/releases/tag/v0.1.17). The diagnostic APK is for investigation and can affect performance.
+1. Download the normal APK from the [current prerelease](https://github.com/lemooz/MKVDCU-Android/releases/tag/v0.1.18). The diagnostic APK is for investigation and can affect performance.
 2. Install it on an Android 9+ ARM64 device with Vulkan 1.1.
 3. In the app, select your own game image when prompted. The game image is not part of this repository or release.
 4. Start with the system Vulkan driver. Try imported drivers only after the app verifies them.

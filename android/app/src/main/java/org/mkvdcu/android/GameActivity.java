@@ -565,6 +565,7 @@ public class GameActivity extends SDLActivity {
         args.add("--vulkan_async_skip_incomplete_frames=false");
         args.add("--native_2x_msaa=false");
         GraphicsSettings.appendArguments(getIntent(), args);
+        appendUe3PerformanceMod(args);
         args.add("--android_swap_passthrough=true");
         // This investigation observes progress; old pixel readbacks would add
         // GPU stalls and change the timing of the Start transition.
@@ -579,5 +580,26 @@ public class GameActivity extends SDLActivity {
 
         Log.i(TAG, "Launching MKVDCU with args: " + args);
         return args.toArray(new String[0]);
+    }
+
+    private void appendUe3PerformanceMod(List<String> args) {
+        if (!GraphicsSettings.ue3PerformancePatch(getIntent())) return;
+        java.io.File modRoot = new java.io.File(getFilesDir(), "mods/ue3-performance");
+        java.io.File config = new java.io.File(modRoot, "Config/Xe-MK8Engine.ini");
+        try {
+            if (!config.getParentFile().isDirectory() && !config.getParentFile().mkdirs())
+                throw new java.io.IOException("could not create mod config directory");
+            try (java.io.InputStream in = getAssets().open("mods/ue3-performance/Config/Xe-MK8Engine.ini");
+                 java.io.FileOutputStream out = new java.io.FileOutputStream(config, false)) {
+                byte[] buffer = new byte[4096];
+                int count;
+                while ((count = in.read(buffer)) != -1) out.write(buffer, 0, count);
+                out.getFD().sync();
+            }
+            args.add("--port_mods=" + modRoot.getAbsolutePath());
+            Log.i(TAG, "UE3 performance mod enabled: " + config.getAbsolutePath());
+        } catch (java.io.IOException error) {
+            Log.e(TAG, "Could not prepare UE3 performance mod; continuing without it", error);
+        }
     }
 }

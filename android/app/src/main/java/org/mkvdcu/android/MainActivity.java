@@ -339,7 +339,8 @@ public class MainActivity extends Activity {
             "Heap de tiler PanVK: " + (graphics.panvkTilerHeapMb()==0 ? "padrão do driver" : graphics.panvkTilerHeapMb()+" MiB"),
             "Pools Vulkan ociosos: " + graphics.idleCommandPoolLimit(),
             "Pulo de quadros da apresentação: " + graphics.frameSkip(),
-            "FXAA do Presenter: " + GraphicsSettings.PRESENTER_EFFECT_NAMES[graphics.presenterEffect()]};
+            "FXAA do Presenter: " + GraphicsSettings.PRESENTER_EFFECT_NAMES[graphics.presenterEffect()],
+            "Patch UE3 — sombras reduzidas: " + (graphics.ue3PerformancePatch() ? "ativado" : "desativado")};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) showPresetDialog();
@@ -507,6 +508,10 @@ public class MainActivity extends Activity {
                             graphics.setPresenterEffect(GraphicsSettings.PRESENTER_EFFECTS[w]); d.dismiss(); showGraphicsSettings();
                         }).setNegativeButton("Cancelar", null).show();
                 }
+                if (which == 30) new AlertDialog.Builder(this).setTitle("Patch UE3 — próxima sessão")
+                    .setMessage("Usa um Xe-MK8Engine.ini extraído da ISO. Desativa Branching PCF e reduz os limites configurados dos mapas de sombra (256/512 px). O arquivo é injetado pelo overlay VFS antes da inicialização do jogo. Pode reduzir qualidade de sombras e o ganho de desempenho ainda depende de medição na mesma luta. O preset Desempenho Mali ativa esta opção; outros presets não.")
+                    .setPositiveButton(graphics.ue3PerformancePatch() ? "Desativar" : "Ativar", (d, w) -> { graphics.setUe3PerformancePatch(!graphics.ue3PerformancePatch()); showGraphicsSettings(); })
+                    .setNegativeButton("Cancelar", null).show();
                 if (which == 23) new AlertDialog.Builder(this).setTitle("Espera econômica do ring GPU")
                     .setMessage("Quando a GPU não libera espaço no ring, o thread do jogo espera de 50 a 400 µs após 16 consultas sem progresso. O atraso é reiniciado quando a GPU avança. Preserva os comandos e o watchdog do jogo; não limita XE_SWAP nem a simulação. Pode reduzir CPU e aquecimento; o resultado depende do aparelho. Exige nova sessão.")
                     .setPositiveButton(graphics.ringBackoff() ? "Desativar para comparar" : "Ativar",(d,w)->{graphics.setRingBackoff(!graphics.ringBackoff());showGraphicsSettings();})
