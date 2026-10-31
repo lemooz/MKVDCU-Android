@@ -340,7 +340,9 @@ public class MainActivity extends Activity {
             "Pools Vulkan ociosos: " + graphics.idleCommandPoolLimit(),
             "Pulo de quadros da apresentação: " + graphics.frameSkip(),
             "FXAA do Presenter: " + GraphicsSettings.PRESENTER_EFFECT_NAMES[graphics.presenterEffect()],
-            "Patch UE3 — sombras reduzidas: " + (graphics.ue3PerformancePatch() ? "ativado" : "desativado")};
+            "Patch UE3 — sombras reduzidas: " + (graphics.ue3PerformancePatch() ? "ativado" : "desativado"),
+            "Reconstrução da imagem: " + GraphicsSettings.PRESENT_EFFECT_NAMES[graphics.presentEffect()],
+            "Nitidez do FSR (RCAS): " + GraphicsSettings.FSR_SHARPNESS_NAMES[java.util.Arrays.binarySearch(GraphicsSettings.FSR_SHARPNESS, graphics.fsrSharpness())]};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) showPresetDialog();
@@ -512,6 +514,16 @@ public class MainActivity extends Activity {
                     .setMessage("Usa um Xe-MK8Engine.ini extraído da ISO. Desativa Branching PCF e reduz os limites configurados dos mapas de sombra (256/512 px). O arquivo é injetado pelo overlay VFS antes da inicialização do jogo. Pode reduzir qualidade de sombras e o ganho de desempenho ainda depende de medição na mesma luta. O preset Desempenho Mali ativa esta opção; outros presets não.")
                     .setPositiveButton(graphics.ue3PerformancePatch() ? "Desativar" : "Ativar", (d, w) -> { graphics.setUe3PerformancePatch(!graphics.ue3PerformancePatch()); showGraphicsSettings(); })
                     .setNegativeButton("Cancelar", null).show();
+                if (which == 31) graphicsChoiceDialog("Reconstrução da imagem — próxima sessão",
+                    "Bilinear apenas estica a cena. CAS aplica nitidez adaptativa em um passe. FSR 1.0 usa EASU + RCAS para reconstruir a saída; pode melhorar a nitidez de escalas de cena menores, mas tem custo GPU e não garante aumento de FPS. Se o build não tiver os shaders espaciais FidelityFX, o backend mantém Bilinear.")
+                    .setSingleChoiceItems(GraphicsSettings.PRESENT_EFFECT_NAMES, graphics.presentEffect(), (d, w) -> {
+                        graphics.setPresentEffect(GraphicsSettings.PRESENT_EFFECTS[w]); d.dismiss(); showGraphicsSettings();
+                    }).setNegativeButton("Cancelar", null).show();
+                if (which == 32) graphicsChoiceDialog("Nitidez do FSR (RCAS)",
+                    "Ajusta a nitidez do passe FSR. Valores maiores podem realçar ruído e serrilhado. Só tem efeito quando a reconstrução está em FSR.")
+                    .setSingleChoiceItems(GraphicsSettings.FSR_SHARPNESS_NAMES, java.util.Arrays.binarySearch(GraphicsSettings.FSR_SHARPNESS, graphics.fsrSharpness()), (d, w) -> {
+                        graphics.setFsrSharpness(GraphicsSettings.FSR_SHARPNESS[w]); d.dismiss(); showGraphicsSettings();
+                    }).setNegativeButton("Cancelar", null).show();
                 if (which == 23) new AlertDialog.Builder(this).setTitle("Espera econômica do ring GPU")
                     .setMessage("Quando a GPU não libera espaço no ring, o thread do jogo espera de 50 a 400 µs após 16 consultas sem progresso. O atraso é reiniciado quando a GPU avança. Preserva os comandos e o watchdog do jogo; não limita XE_SWAP nem a simulação. Pode reduzir CPU e aquecimento; o resultado depende do aparelho. Exige nova sessão.")
                     .setPositiveButton(graphics.ringBackoff() ? "Desativar para comparar" : "Ativar",(d,w)->{graphics.setRingBackoff(!graphics.ringBackoff());showGraphicsSettings();})

@@ -25,6 +25,14 @@ final class GraphicsSettings {
     static final int[] FRAME_GENERATION_FACTORS = {2, 3, 4};
     static final int[] PRESENTER_EFFECTS = {0, 1, 2};
     static final String[] PRESENTER_EFFECT_NAMES = {"Desativado", "FXAA", "FXAA extremo"};
+    // Guest-output scaling effects provided by the Android Vulkan presenter.
+    static final int[] PRESENT_EFFECTS = {0, 1, 2};
+    static final String[] PRESENT_EFFECT_NAMES = {
+        "Bilinear — menor custo", "CAS — nitidez adaptativa", "FSR 1.0 — EASU + RCAS"
+    };
+    private static final String[] PRESENT_EFFECT_ARGS = {"bilinear", "cas", "fsr"};
+    static final int[] FSR_SHARPNESS = {0, 10, 20, 40, 80, 120};
+    static final String[] FSR_SHARPNESS_NAMES = {"0,0", "0,1", "0,2 (padrão)", "0,4", "0,8", "1,2"};
 
     static final int PRESET_LOW = 0;
     static final int PRESET_BALANCED = 1;
@@ -75,6 +83,8 @@ final class GraphicsSettings {
             .putBoolean(PREFIX + "compact_dxt1", low)
             .putBoolean(PREFIX + "ue3_performance_patch", low)
             .putInt(PREFIX + "presenter_effect", 0)
+            .putInt(PREFIX + "present_effect", high ? 0 : 2)
+            .putInt(PREFIX + "fsr_sharpness", low ? 40 : 20)
             .putInt(PREFIX + "fps_limit", low ? 30 : 60)
             .putInt(PREFIX + "pipeline_threads", -1)
             .putInt(PREFIX + "video_mode", 0)
@@ -139,6 +149,13 @@ final class GraphicsSettings {
     int presenterEffect() { return allowed(prefs.getInt(PREFIX + "presenter_effect", 0), PRESENTER_EFFECTS, 0); }
     void setPresenterEffect(int value) { editCustom().putInt(PREFIX + "presenter_effect", allowed(value, PRESENTER_EFFECTS, 0)).apply(); }
     static int presenterEffect(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "presenter_effect", 0), PRESENTER_EFFECTS, 0); }
+    int presentEffect() { return allowed(prefs.getInt(PREFIX + "present_effect", 0), PRESENT_EFFECTS, 0); }
+    void setPresentEffect(int value) { editCustom().putInt(PREFIX + "present_effect", allowed(value, PRESENT_EFFECTS, 0)).apply(); }
+    static int presentEffect(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "present_effect", 0), PRESENT_EFFECTS, 0); }
+    static String presentEffectArgument(Intent intent) { return PRESENT_EFFECT_ARGS[presentEffect(intent)]; }
+    int fsrSharpness() { return allowed(prefs.getInt(PREFIX + "fsr_sharpness", 20), FSR_SHARPNESS, 20); }
+    void setFsrSharpness(int value) { editCustom().putInt(PREFIX + "fsr_sharpness", allowed(value, FSR_SHARPNESS, 20)).apply(); }
+    static int fsrSharpness(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "fsr_sharpness", 20), FSR_SHARPNESS, 20); }
     static int cores(Intent intent) { return clampCores(intent.getIntExtra(PREFIX + "cpu_cores", 0)); }
     static boolean economy(Intent intent) { return intent.getBooleanExtra(PREFIX + "economy", false); }
     static int effectiveFpsLimit(Intent intent) {
@@ -197,6 +214,7 @@ final class GraphicsSettings {
             .remove(PREFIX + "batch").remove(PREFIX + "video_mode").remove(PREFIX + "gpu_timing").remove(PREFIX + "pipeline_threads")
             .remove(PREFIX + "gpu_stages").remove(PREFIX + "turnip_mode").remove(PREFIX + "panvk_late_stencil").remove(PREFIX + "scale_percent").remove(PREFIX + "cpu_cores")
             .remove(PREFIX + "economy").remove(PREFIX + "compact_memory").remove(PREFIX + "fps_limit")
+            .remove(PREFIX + "present_effect").remove(PREFIX + "fsr_sharpness")
             .remove(PREFIX + "frame_skip")
             .remove(PREFIX + "frame_generation").remove(PREFIX + "frame_generation_adaptive").remove(PREFIX + "frame_generation_factor").remove(PREFIX + "panvk_tiler_heap_mb")
             .remove(PREFIX + "ring_backoff").remove(PREFIX + "relaxed_fragment").remove(PREFIX + "compact_dxt1")
@@ -222,6 +240,8 @@ final class GraphicsSettings {
             .putExtra(PREFIX + "relaxed_fragment", relaxedFragment())
             .putExtra(PREFIX + "compact_dxt1", compactDxt1())
             .putExtra(PREFIX + "presenter_effect", presenterEffect())
+            .putExtra(PREFIX + "present_effect", presentEffect())
+            .putExtra(PREFIX + "fsr_sharpness", fsrSharpness())
             .putExtra(PREFIX + "ue3_performance_patch", ue3PerformancePatch())
             .putExtra(PREFIX + "idle_command_pool_limit", idleCommandPoolLimit());
     }
@@ -245,6 +265,8 @@ final class GraphicsSettings {
         args.add("--vulkan_dxt1_compact=" + intent.getBooleanExtra(PREFIX + "compact_dxt1", false));
         int presenterEffect = presenterEffect(intent);
         args.add("--swap_post_effect=" + (presenterEffect == 2 ? "fxaa_extreme" : presenterEffect == 1 ? "fxaa" : "none"));
+        args.add("--present_effect=" + presentEffectArgument(intent));
+        args.add("--present_fsr_sharpness_reduction=" + String.format(java.util.Locale.ROOT, "%.2f", fsrSharpness(intent) / 100.0f));
         args.add("--port_internal_resolution_percent=100");
         args.add("--port_scene_resolution_percent=" + scalePercent(intent));
         args.add("--texture_cache_memory_limit_soft_lifetime=" + (compact ? 5 : 30));

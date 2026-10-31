@@ -14,6 +14,9 @@ assert 'Mantém um limite menor, como 24 FPS, se você o selecionou' in ui
 assert 'não pausa o XE_SWAP nem altera o relógio guest' in ui
 assert not re.search(r'new AlertDialog\.Builder\(this\)\.setTitle\([^;]*?\.setMessage\([^;]*?\.setSingleChoiceItems',ui)
 assert '"Pools Vulkan ociosos: " + graphics.idleCommandPoolLimit()' in ui
+assert '"Reconstrução da imagem: " + GraphicsSettings.PRESENT_EFFECT_NAMES[graphics.presentEffect()]' in ui
+assert 'graphics.setPresentEffect(GraphicsSettings.PRESENT_EFFECTS[w])' in ui
+assert 'graphics.setFsrSharpness(GraphicsSettings.FSR_SHARPNESS[w])' in ui
 assert re.search(r'if \(which == 27\).*?setSingleChoiceItems\(new String\[\]\{[^}]*32[^}]*\}.*?setIdleCommandPoolLimit', ui, re.S)
 assert '"Pulo de quadros da apresentação: " + graphics.frameSkip()' in ui
 assert re.search(r'if \(which == 28\).*?Pular 1 quadro.*?setFrameSkip', ui, re.S)
@@ -74,6 +77,13 @@ public class GraphicsHarness {
  static int checks; static void check(boolean b){checks++;if(!b)throw new AssertionError("graphics settings check "+checks);}
  public static void main(String[] unused){
   GraphicsSettings g=new GraphicsSettings(new Context()); Intent i=new Intent();g.attach(i);
+  check(args(i).contains("--present_effect=bilinear"));
+  check(args(i).contains("--present_fsr_sharpness_reduction=0.20"));
+  g.setPresentEffect(2);g.setFsrSharpness(40);Intent reconstruction=new Intent();g.attach(reconstruction);
+  check(args(reconstruction).contains("--present_effect=fsr"));
+  check(args(reconstruction).contains("--present_fsr_sharpness_reduction=0.40"));
+  g.setPresentEffect(1);Intent cas=new Intent();g.attach(cas);check(args(cas).contains("--present_effect=cas"));
+  g.setPresentEffect(99);check(g.presentEffect()==0);g.setFsrSharpness(999);check(g.fsrSharpness()==20);
   check(args(i).contains("--anisotropic_override=-1"));check(args(i).contains("--texture_cache_memory_limit_hard=768"));
   check(args(i).contains("--vulkan_gpu_timing_interval=64"));
   check(args(i).contains("--vulkan_pipeline_creation_threads=2"));
@@ -126,6 +136,8 @@ public class GraphicsHarness {
   check(args(pLow).contains("--vulkan_submit_on_primary_buffer_end=false"));
   check(args(pLow).contains("--vulkan_gpu_timing_interval=64"));
   check(args(pLow).contains("--port_scene_resolution_percent=50"));
+  check(args(pLow).contains("--present_effect=fsr"));
+  check(args(pLow).contains("--present_fsr_sharpness_reduction=0.40"));
   check(args(pLow).contains("--port_internal_resolution_percent=100"));
   check(args(pLow).contains("--present_frame_rate_limit=30"));
   check(g.ue3PerformancePatch());
@@ -139,6 +151,7 @@ public class GraphicsHarness {
   check(args(pHigh).contains("--anisotropic_override=2"));
   check(args(pHigh).contains("--texture_cache_memory_limit_hard=1536"));
   check(args(pHigh).contains("--vulkan_spirv_optimize=true"));
+  check(args(pHigh).contains("--present_effect=bilinear"));
   g.applyPreset(GraphicsSettings.PRESET_BALANCED);
   check(g.activePreset()==GraphicsSettings.PRESET_BALANCED);
   Intent pBalanced=new Intent();g.attach(pBalanced);
@@ -196,6 +209,7 @@ public class GraphicsHarness {
   check(g.idleCommandPoolLimit()==8);
   check(g.frameSkip()==0);
   check(GraphicsSettings.summary(i).contains("requested_internal="));
+  check(g.presentEffect()==0&&g.fsrSharpness()==20);
  }
 }'''
 }

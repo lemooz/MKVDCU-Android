@@ -1,8 +1,40 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 9b3cdf5..8f6b4c0 100644
+index 9b3cdf5..1010392 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -121,7 +121,8 @@ if(NOT WIN32)
+@@ -21,6 +21,19 @@ project(ReXGlue
+ option(REXGLUE_BUILD_TESTS       "Build PPC instruction and unit tests" OFF)
+ option(REXGLUE_ENABLE_SANITIZERS "Enable UndefinedBehaviorSanitizer" OFF)
+ option(REXGLUE_ENABLE_FIDELITYFX "Enable optional AMD FidelityFX integration (experimental)" OFF)
++# Shader-only guest output upscaling: CAS and spatial FSR 1.0 (EASU + RCAS).
++# Unlike REXGLUE_ENABLE_FIDELITYFX this needs no FFX API runtime or SDK headers,
++# only the prebuilt guest_output_ffx_* SPIR-V shaders, so it also works on
++# Android arm64 where the temporal FSR 2/3 path is unavailable. Defaults to ON
++# for Android to keep the launcher's upscaling selector meaningful there.
++if(ANDROID)
++    set(REXGLUE_FIDELITYFX_SPATIAL_DEFAULT ON)
++else()
++    set(REXGLUE_FIDELITYFX_SPATIAL_DEFAULT OFF)
++endif()
++option(REXGLUE_ENABLE_FIDELITYFX_SPATIAL
++       "Enable shader-only FidelityFX CAS / spatial FSR guest output effects"
++       ${REXGLUE_FIDELITYFX_SPATIAL_DEFAULT})
+ option(REXGLUE_ENABLE_TRACY                "Enable Tracy profiler integration" ON)
+ option(REXGLUE_ENABLE_PERF_COUNTERS        "Enable lightweight perf counter registry and overlay" ON)
+ # Propagate profiling defines globally (compiled out in Release)
+@@ -52,6 +65,11 @@ if (REXGLUE_ENABLE_FIDELITYFX AND
+         "REXGLUE_ENABLE_FIDELITYFX requires at least one graphics backend")
+ endif()
+ 
++if (REXGLUE_ENABLE_FIDELITYFX_SPATIAL AND NOT REXGLUE_USE_VULKAN)
++    message(FATAL_ERROR
++        "REXGLUE_ENABLE_FIDELITYFX_SPATIAL requires REXGLUE_USE_VULKAN")
++endif()
++
+ # Root of the SDK source tree
+ set(REXGLUE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+ 
+@@ -121,7 +139,8 @@ if(NOT WIN32)
          # macOS uses small: the ld64 linker on macOS 15+ rejects text relocations produced
          # by -mcmodel=large, and macOS maps binaries in the low address space so ±2GB is sufficient.
          add_compile_options(-mcmodel=large)
@@ -12,7 +44,7 @@ index 9b3cdf5..8f6b4c0 100644
          add_compile_options(-mcmodel=small)
      endif()
      # Position-independent code for all targets
-@@ -129,15 +130,30 @@ if(NOT WIN32)
+@@ -129,15 +148,30 @@ if(NOT WIN32)
  endif()
  
  # Global compile options
@@ -52,7 +84,7 @@ index 9b3cdf5..8f6b4c0 100644
  
  # Platform detection (supports AMD64 and ARM64)
  set(REX_TARGET_PROCESSOR "${CMAKE_SYSTEM_PROCESSOR}")
-@@ -149,7 +165,14 @@ if(APPLE AND CMAKE_OSX_ARCHITECTURES)
+@@ -149,7 +183,14 @@ if(APPLE AND CMAKE_OSX_ARCHITECTURES)
      list(GET CMAKE_OSX_ARCHITECTURES 0 REX_TARGET_PROCESSOR)
  endif()
  
@@ -68,7 +100,7 @@ index 9b3cdf5..8f6b4c0 100644
      if(REX_TARGET_PROCESSOR MATCHES "AMD64|x86_64")
          set(REX_PLATFORM "win-amd64")
      elseif(REX_TARGET_PROCESSOR MATCHES "aarch64|ARM64|arm64")
-@@ -244,10 +267,12 @@ endif()
+@@ -244,10 +285,12 @@ endif()
  add_subdirectory(thirdparty)
  
  # Enable warnings after thirdparty
@@ -85,7 +117,7 @@ index 9b3cdf5..8f6b4c0 100644
  
  include_directories(${REXGLUE_ROOT}/include)
  
-@@ -259,8 +284,14 @@ add_subdirectory(src/audio)
+@@ -259,8 +302,14 @@ add_subdirectory(src/audio)
  add_subdirectory(src/graphics)
  add_subdirectory(src/system)
  add_subdirectory(src/kernel)
@@ -102,7 +134,7 @@ index 9b3cdf5..8f6b4c0 100644
  
  # Add tests subdirectory if tests are enabled
  if(REXGLUE_BUILD_TESTS)
-@@ -285,8 +316,9 @@ message(STATUS "  Tracy: ${REXGLUE_ENABLE_TRACY}")
+@@ -285,8 +334,9 @@ message(STATUS "  Tracy: ${REXGLUE_ENABLE_TRACY}")
  message(STATUS "  Perf Counters: ${REXGLUE_ENABLE_PERF_COUNTERS}")
  message(STATUS "===========================================")
  
@@ -1355,10 +1387,42 @@ index 0000000..e13c07b
 +};
 +}  // namespace rex::ui
 diff --git a/include/rex/ui/presenter.h b/include/rex/ui/presenter.h
-index afb4a30..893640a 100644
+index afb4a30..fe8f6d5 100644
 --- a/include/rex/ui/presenter.h
 +++ b/include/rex/ui/presenter.h
-@@ -217,6 +217,10 @@ class Presenter {
+@@ -34,6 +34,25 @@
+ #include <rex/ui/surface.h>
+ #include <rex/ui/ui_drawer.h>
+ 
++// Guest output upscaling capabilities.
++//
++// REX_HAS_FIDELITYFX_SDK comes from the official AMD FidelityFX SDK headers and
++// enables every effect, including the temporal FSR 2/3 path.
++// CAS and spatial FSR 1.0 (EASU + RCAS) only need the prebuilt guest output
++// SPIR-V shaders (guest_output_ffx_*_ps). Mobile targets have no FFX API
++// runtime, so they set REX_HAS_FIDELITYFX_SPATIAL to enable exactly those
++// shader-only effects.
++#if defined(REX_HAS_FIDELITYFX_SDK)
++#define REX_HAS_FFX_SPATIAL 1
++#define REX_HAS_FFX_TEMPORAL 1
++#elif defined(REX_HAS_FIDELITYFX_SPATIAL)
++#define REX_HAS_FFX_SPATIAL 1
++#define REX_HAS_FFX_TEMPORAL 0
++#else
++#define REX_HAS_FFX_SPATIAL 0
++#define REX_HAS_FFX_TEMPORAL 0
++#endif
++
+ #if REX_PLATFORM_WIN32
+ #ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN
+@@ -212,11 +231,16 @@ class Presenter {
+    public:
+     enum class Effect {
+       kBilinear,
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+       kCas,
        // AMD FidelityFX Super Resolution upsampling, Contrast Adaptive
        // Sharpening otherwise.
        kFsr,
@@ -1366,12 +1430,105 @@ index afb4a30..893640a 100644
 +      // Spatial EASU without the full-resolution RCAS presentation pass.
 +      kFsrFast,
 +#endif
++#if REX_HAS_FFX_TEMPORAL
        // FidelityFX FSR2 selection. Uses the runtime temporal upscaler path
        // where available; currently still experimental due to limited temporal
        // inputs in the presenter path.
-@@ -463,7 +467,9 @@ class Presenter {
+@@ -225,10 +249,11 @@ class Presenter {
+       // where available; currently still experimental due to limited temporal
+       // inputs in the presenter path.
+       kFsr3,
++#endif
+ #endif
+     };
+ 
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_TEMPORAL
+     enum class FsrQualityMode {
+       // Keep current behavior and use the guest output size as-is.
+       kAuto,
+@@ -238,7 +263,9 @@ class Presenter {
+       kPerformance,
+       kUltraPerformance,
+     };
++#endif
+ 
++#if REX_HAS_FFX_SPATIAL
+     // This value is used as a lerp factor.
+     static constexpr float kCasAdditionalSharpnessMin = 0.0f;
+     static constexpr float kCasAdditionalSharpnessMax = 1.0f;
+@@ -260,7 +287,7 @@ class Presenter {
+     static constexpr float kFsrSharpnessReductionDefault = 0.2f;
+     static_assert(kFsrSharpnessReductionDefault >= kFsrSharpnessReductionMin &&
+                   kFsrSharpnessReductionDefault <= kFsrSharpnessReductionMax);
+-#endif  // defined(REX_HAS_FIDELITYFX_SDK)
++#endif  // REX_HAS_FFX_SPATIAL
+ 
+     // In the sharpness setters, min / max with a constant as the first argument
+     // also drops NaNs.
+@@ -273,7 +300,7 @@ class Presenter {
+     Effect GetEffect() const { return effect_; }
+     void SetEffect(Effect new_effect) { effect_ = new_effect; }
+ 
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+     float GetCasAdditionalSharpness() const { return cas_additional_sharpness_; }
+     void SetCasAdditionalSharpness(float new_cas_additional_sharpness) {
+       cas_additional_sharpness_ =
+@@ -294,12 +321,14 @@ class Presenter {
+           std::min(kFsrSharpnessReductionMax,
+                    std::max(kFsrSharpnessReductionMin, new_fsr_sharpness_reduction));
+     }
++#endif  // REX_HAS_FFX_SPATIAL
+ 
++#if REX_HAS_FFX_TEMPORAL
+     FsrQualityMode GetFsrQualityMode() const { return fsr_quality_mode_; }
+     void SetFsrQualityMode(FsrQualityMode new_fsr_quality_mode) {
+       fsr_quality_mode_ = new_fsr_quality_mode;
+     }
+-#endif  // defined(REX_HAS_FIDELITYFX_SDK)
++#endif  // REX_HAS_FFX_TEMPORAL
+ 
+     // Very tiny effect, but highly noticeable, for instance, on the sky in the
+     // 4D5307E6 main menu (prominently in Custom Games, especially with FSR -
+@@ -314,10 +343,12 @@ class Presenter {
+     // original front buffer as possible.
+     bool allow_overscan_cutoff_ = false;
+     Effect effect_ = Effect::kBilinear;
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+     float cas_additional_sharpness_ = kCasAdditionalSharpnessDefault;
+     uint32_t fsr_max_upsampling_passes_ = kFsrMaxUpscalingPassesMax;
+     float fsr_sharpness_reduction_ = kFsrSharpnessReductionDefault;
++#endif
++#if REX_HAS_FFX_TEMPORAL
+     FsrQualityMode fsr_quality_mode_ = FsrQualityMode::kAuto;
+ #endif
+     bool dither_ = false;
+@@ -427,7 +458,7 @@ class Presenter {
+   enum class GuestOutputPaintEffect {
+     kBilinear,
+     kBilinearDither,
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+     kCasSharpen,
+     kCasSharpenDither,
+     kCasResample,
+@@ -446,7 +477,7 @@ class Presenter {
+       // Dithering is never performed in intermediate passes because it may be
+       // interpreted as features by the subsequent passes.
+       case GuestOutputPaintEffect::kBilinearDither:
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+       case GuestOutputPaintEffect::kCasSharpenDither:
+       case GuestOutputPaintEffect::kCasResampleDither:
+       case GuestOutputPaintEffect::kFsrRcasDither:
+@@ -461,16 +492,18 @@ class Presenter {
+ 
+   static constexpr bool CanGuestOutputPaintEffectBeFinal(GuestOutputPaintEffect effect) {
      switch (effect) {
- #if defined(REX_HAS_FIDELITYFX_SDK)
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
        case GuestOutputPaintEffect::kFsrEasu:
 +#if !defined(REX_PLATFORM_WINDOWS)
          return false;
@@ -1379,6 +1536,32 @@ index afb4a30..893640a 100644
  #endif
        default:
          return true;
+     };
+   }
+ 
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+   // The longest path is kFsrMaxUpscalingPassesMax + optionally RCAS +
+   // optionally bilinear, when upscaling by more than
+   // 2^kFsrMaxUpscalingPassesMax along any direction.
+@@ -548,7 +581,7 @@ class Presenter {
+     }
+   };
+ 
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+   static constexpr float CalculateCasPostSetupSharpness(float sharpness) {
+     // CasSetup const1.x.
+     return -1.0f / (8.0f - 3.0f * sharpness);
+@@ -615,7 +648,7 @@ class Presenter {
+       sharpness_post_setup = CalculatePostSetupSharpness(config.GetFsrSharpnessReduction());
+     }
+   };
+-#endif  // defined(REX_HAS_FIDELITYFX_SDK)
++#endif  // REX_HAS_FFX_SPATIAL
+ 
+   explicit Presenter(HostGpuLossCallback host_gpu_loss_callback)
+       : host_gpu_loss_callback_(host_gpu_loss_callback) {}
 diff --git a/include/rex/ui/surface_android.h b/include/rex/ui/surface_android.h
 new file mode 100644
 index 0000000..d30b332
@@ -1503,7 +1686,7 @@ index b4ad934..0da71a5 100644
  XE_UI_VULKAN_FUNCTION(vkGetPhysicalDeviceProperties)
  XE_UI_VULKAN_FUNCTION(vkGetPhysicalDeviceQueueFamilyProperties)
 diff --git a/include/rex/ui/vulkan/presenter.h b/include/rex/ui/vulkan/presenter.h
-index 56ee43b..43ee5c1 100644
+index 56ee43b..aabc0ed 100644
 --- a/include/rex/ui/vulkan/presenter.h
 +++ b/include/rex/ui/vulkan/presenter.h
 @@ -94,8 +94,8 @@ class VulkanPresenter final : public Presenter {
@@ -1517,6 +1700,24 @@ index 56ee43b..43ee5c1 100644
      VkImage image() const { return image_; }
      VkImageView image_view() const { return image_view_; }
      uint64_t image_version() const { return image_version_; }
+@@ -230,7 +230,7 @@ class VulkanPresenter final : public Presenter {
+ 
+   enum GuestOutputPaintPipelineLayoutIndex : size_t {
+     kGuestOutputPaintPipelineLayoutIndexBilinear,
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+     kGuestOutputPaintPipelineLayoutIndexCasSharpen,
+     kGuestOutputPaintPipelineLayoutIndexCasResample,
+     kGuestOutputPaintPipelineLayoutIndexFsrEasu,
+@@ -246,7 +246,7 @@ class VulkanPresenter final : public Presenter {
+       case GuestOutputPaintEffect::kBilinear:
+       case GuestOutputPaintEffect::kBilinearDither:
+         return kGuestOutputPaintPipelineLayoutIndexBilinear;
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+       case GuestOutputPaintEffect::kCasSharpen:
+       case GuestOutputPaintEffect::kCasSharpenDither:
+         return kGuestOutputPaintPipelineLayoutIndexCasSharpen;
 @@ -281,7 +281,6 @@ class VulkanPresenter final : public Presenter {
        ~Submission();
  
@@ -7385,7 +7586,7 @@ index 305380e..aca4883 100644
      copy_dest_extent_end = copy_dest_base_adjusted;
    }
 diff --git a/src/graphics/vulkan/command_processor.cpp b/src/graphics/vulkan/command_processor.cpp
-index 001f36b..35ae54b 100644
+index 001f36b..faecba6 100644
 --- a/src/graphics/vulkan/command_processor.cpp
 +++ b/src/graphics/vulkan/command_processor.cpp
 @@ -9,16 +9,24 @@
@@ -7445,7 +7646,7 @@ index 001f36b..35ae54b 100644
      .lifecycle(rex::cvar::Lifecycle::kHotReload);
  
  REXCVAR_DEFINE_BOOL(vulkan_submit_on_primary_buffer_end, true, "GPU/Vulkan",
-@@ -69,6 +83,98 @@ REXCVAR_DEFINE_BOOL(vulkan_dynamic_rendering, true, "GPU/Vulkan",
+@@ -69,6 +83,103 @@ REXCVAR_DEFINE_BOOL(vulkan_dynamic_rendering, true, "GPU/Vulkan",
                      "device (falls back to render passes otherwise)")
      .lifecycle(rex::cvar::Lifecycle::kHotReload);
  
@@ -7522,6 +7723,11 @@ index 001f36b..35ae54b 100644
 +REXCVAR_DEFINE_INT32(vulkan_gpu_stage_timing_interval, 0, "GPU/Vulkan",
 +                     "Sample draw/dump/resolve GPU timestamp scopes every N frames (0 disables)");
 +
++REXCVAR_DEFINE_BOOL(vulkan_gpu_stages, false, "GPU/Vulkan",
++                    "Sample GPU stages every 64 draws (Mali G68 optimization: reduces LOAD/STORE)");
++// REXCVAR_DEFINE_INT32(vulkan_pipeline_creation_threads, -1, "GPU/Vulkan",
++//                      "Number of concurrent pipeline compilers (-1 = auto, 1-2 recommended for Mali G68)");
++
 +REXCVAR_DEFINE_BOOL(android_swap_passthrough, true, "GPU/Vulkan",
 +                    "Android: bypass 10-bit gamma ramp table in swapchain presentation")
 +    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
@@ -7544,7 +7750,7 @@ index 001f36b..35ae54b 100644
  namespace rex::graphics::vulkan {
  
  namespace {
-@@ -325,6 +431,37 @@ void main() {
+@@ -325,6 +436,37 @@ void main() {
  )";
  }
  
@@ -7582,7 +7788,7 @@ index 001f36b..35ae54b 100644
  const char* GetSwapApplyGammaTablePixelRbSwapSource() {
    return R"(#version 450
  layout(set = 0, binding = 0) uniform textureBuffer xe_apply_gamma_ramp;
-@@ -930,10 +1067,11 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -930,10 +1072,11 @@ bool VulkanCommandProcessor::SetupContext() {
      return false;
    }
    if (!device_properties.vertexPipelineStoresAndAtomics) {
@@ -7598,7 +7804,7 @@ index 001f36b..35ae54b 100644
    }
    if (!device_properties.geometryShader) {
      if (REXCVAR_GET(vulkan_require_geometry_shader)) {
-@@ -1207,6 +1345,24 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -1207,6 +1350,24 @@ bool VulkanCommandProcessor::SetupContext() {
    }
  
    // Gamma ramp buffer views.
@@ -7623,7 +7829,7 @@ index 001f36b..35ae54b 100644
    uint32_t gamma_ramp_frame_count =
        gamma_ramp_upload_buffer_ == VK_NULL_HANDLE ? kMaxFramesInFlight : 1;
    VkBufferViewCreateInfo gamma_ramp_buffer_view_create_info;
-@@ -1725,36 +1881,42 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -1725,36 +1886,42 @@ bool VulkanCommandProcessor::SetupContext() {
          device, VK_NULL_HANDLE, 1, &swap_apply_gamma_pipeline_create_info, nullptr,
          swap_apply_gamma_pipelines[i]);
    }
@@ -7695,7 +7901,7 @@ index 001f36b..35ae54b 100644
    }
    dfn.vkDestroyShaderModule(device, swap_apply_gamma_pipeline_stages[0].module, nullptr);
    for (VkShaderModule swap_apply_gamma_pixel_shader : swap_apply_gamma_pixel_shaders) {
-@@ -1893,11 +2055,31 @@ bool VulkanCommandProcessor::SetupContext() {
+@@ -1893,11 +2060,31 @@ bool VulkanCommandProcessor::SetupContext() {
    // Just not to expose uninitialized memory.
    std::memset(&system_constants_, 0, sizeof(system_constants_));
  
@@ -7727,7 +7933,7 @@ index 001f36b..35ae54b 100644
    InvalidateAllVertexBufferResidency();
    ShutdownOcclusionQueryResources();
  
-@@ -1985,6 +2167,10 @@ void VulkanCommandProcessor::ShutdownContext() {
+@@ -1985,6 +2172,10 @@ void VulkanCommandProcessor::ShutdownContext() {
                                           swap_apply_gamma_256_entry_table_pipeline_);
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipeline, device,
                                           swap_apply_gamma_256_entry_table_fxaa_luma_pipeline_);
@@ -7738,7 +7944,7 @@ index 001f36b..35ae54b 100644
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyRenderPass, device,
                                           swap_apply_gamma_render_pass_);
    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineLayout, device,
-@@ -2271,7 +2457,9 @@ void VulkanCommandProcessor::OnGammaRampPWLValueWritten() {
+@@ -2271,7 +2462,9 @@ void VulkanCommandProcessor::OnGammaRampPWLValueWritten() {
  
  void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontbuffer_width,
                                         uint32_t frontbuffer_height) {
@@ -7748,7 +7954,7 @@ index 001f36b..35ae54b 100644
    vertex_buffers_in_sync_[0] = 0;
    vertex_buffers_in_sync_[1] = 0;
  
-@@ -2289,6 +2477,26 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2289,6 +2482,26 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
      return;
    }
  
@@ -7775,7 +7981,7 @@ index 001f36b..35ae54b 100644
    bool skip_present_due_async_placeholder = REXCVAR_GET(async_shader_compilation) &&
                                              REXCVAR_GET(vulkan_async_skip_incomplete_frames) &&
                                              frame_used_async_placeholder_pipeline_;
-@@ -2306,15 +2514,31 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2306,15 +2519,31 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
  
    SwapPostEffect swap_post_effect = GetActualSwapPostEffect();
  
@@ -7810,7 +8016,7 @@ index 001f36b..35ae54b 100644
    if (swap_texture_view == VK_NULL_HANDLE) {
      REXGPU_ERROR("XELOG_GPU PRESENT: swap_texture_view=NULL");
      return;
-@@ -2408,11 +2632,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2408,11 +2637,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
    uint32_t display_width = std::max(uint32_t(1), uint32_t(video_mode.display_width));
    uint32_t display_height = std::max(uint32_t(1), uint32_t(video_mode.display_height));
  
@@ -7826,7 +8032,7 @@ index 001f36b..35ae54b 100644
          // In case the swap command is the only one in the frame.
          if (!BeginSubmission(true)) {
            return false;
-@@ -2512,6 +2736,22 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2512,6 +2741,22 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
            }
          }
          bool use_compute_gamma = swap_apply_gamma_compute_pipeline != VK_NULL_HANDLE;
@@ -7849,7 +8055,7 @@ index 001f36b..35ae54b 100644
  
          // TODO(Triang3l): FXAA can result in more than 8 bits of precision.
          context.SetIs8bpc(!use_pwl_gamma_ramp && !use_fxaa);
-@@ -2546,11 +2786,41 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2546,11 +2791,41 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
                gamma_ramp_pwl_upload_entry.base = gamma_ramp_pwl_entry.delta;
                gamma_ramp_pwl_upload_entry.delta = gamma_ramp_pwl_entry.base;
              }
@@ -7895,7 +8101,7 @@ index 001f36b..35ae54b 100644
            }
            bool gamma_ramp_has_upload_buffer = gamma_ramp_upload_buffer_memory_ != VK_NULL_HANDLE;
            VkPipelineStageFlags gamma_ramp_read_stage_mask =
-@@ -2587,7 +2857,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2587,7 +2862,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
          VkDescriptorSet swap_descriptor_source = swap_descriptors_source_[swap_frame_index];
          VkDescriptorImageInfo swap_descriptor_source_image_info;
          swap_descriptor_source_image_info.sampler = VK_NULL_HANDLE;
@@ -7904,7 +8110,7 @@ index 001f36b..35ae54b 100644
          swap_descriptor_source_image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
          VkWriteDescriptorSet swap_descriptor_source_write;
          swap_descriptor_source_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-@@ -2873,39 +3143,104 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2873,39 +3148,104 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
            scissor.extent.height = guest_output_height;
            SetScissor(scissor);
  
@@ -8036,7 +8242,7 @@ index 001f36b..35ae54b 100644
  
            // Insert the release barrier.
            PushImageMemoryBarrier(vulkan_context.image(), guest_output_subresource_range,
-@@ -2922,11 +3257,103 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
+@@ -2922,11 +3262,103 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr, uint32_t frontb
          // queue, and also need to submit the release barrier.
          EndSubmission(true);
          return true;
@@ -8142,7 +8348,7 @@ index 001f36b..35ae54b 100644
  }
  
  bool VulkanCommandProcessor::PushBufferMemoryBarrier(
-@@ -3060,6 +3487,11 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
+@@ -3060,6 +3492,11 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
      }
      return false;
    }
@@ -8154,7 +8360,7 @@ index 001f36b..35ae54b 100644
    EndRenderPass();
    for (auto it = pending_barriers_.cbegin(); it != pending_barriers_.cend(); ++it) {
      auto it_next = std::next(it);
-@@ -3095,28 +3527,80 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3095,28 +3532,80 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
    bool use_dynamic_rendering =
        REXCVAR_GET(vulkan_dynamic_rendering) && vulkan_device->properties().dynamicRendering;
  
@@ -8250,7 +8456,7 @@ index 001f36b..35ae54b 100644
  
    if (use_dynamic_rendering) {
      VkRenderingAttachmentInfo color_attachments[xenos::kMaxColorRenderTargets];
-@@ -3125,6 +3609,27 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3125,6 +3614,27 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
      uint32_t color_attachment_count = 0;
      render_target_cache_->GetLastUpdateRenderingAttachments(
          color_attachments, &color_attachment_count, &depth_attachment, &stencil_attachment);
@@ -8278,7 +8484,7 @@ index 001f36b..35ae54b 100644
      bool has_depth = depth_attachment.sType == VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
      bool has_stencil = stencil_attachment.sType == VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
  
-@@ -3132,9 +3637,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3132,9 +3642,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
      rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
      rendering_info.pNext = nullptr;
      rendering_info.flags = 0;
@@ -8289,7 +8495,7 @@ index 001f36b..35ae54b 100644
      rendering_info.layerCount = 1;
      rendering_info.viewMask = 0;
      rendering_info.colorAttachmentCount = color_attachment_count;
-@@ -3148,11 +3651,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3148,11 +3656,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
      render_pass_begin_info.pNext = nullptr;
      render_pass_begin_info.renderPass = render_pass;
      render_pass_begin_info.framebuffer = framebuffer->framebuffer;
@@ -8302,7 +8508,7 @@ index 001f36b..35ae54b 100644
      render_pass_begin_info.clearValueCount = 0;
      render_pass_begin_info.pClearValues = nullptr;
      deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
-@@ -3163,34 +3662,71 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3163,34 +3667,71 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
  
  void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
      VkRenderPass render_pass, const VulkanRenderTargetCache::Framebuffer* framebuffer,
@@ -8391,7 +8597,7 @@ index 001f36b..35ae54b 100644
  
    if (use_dynamic_rendering) {
      VkRenderingAttachmentInfo color_attachment = {};
-@@ -3205,7 +3741,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3205,7 +3746,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
        depth_attachment.resolveMode = VK_RESOLVE_MODE_NONE;
        depth_attachment.resolveImageView = VK_NULL_HANDLE;
        depth_attachment.resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -8400,7 +8606,7 @@ index 001f36b..35ae54b 100644
        depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
        depth_attachment.clearValue = {};
        stencil_attachment = depth_attachment;
-@@ -3217,7 +3753,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3217,7 +3758,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
        color_attachment.resolveMode = VK_RESOLVE_MODE_NONE;
        color_attachment.resolveImageView = VK_NULL_HANDLE;
        color_attachment.resolveImageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -8409,7 +8615,7 @@ index 001f36b..35ae54b 100644
        color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
        color_attachment.clearValue = {};
      }
-@@ -3226,9 +3762,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3226,9 +3767,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
      rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
      rendering_info.pNext = nullptr;
      rendering_info.flags = 0;
@@ -8420,7 +8626,7 @@ index 001f36b..35ae54b 100644
      rendering_info.layerCount = 1;
      rendering_info.viewMask = 0;
      rendering_info.colorAttachmentCount = transfer_dest_is_depth ? 0 : 1;
-@@ -3242,9 +3776,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
+@@ -3242,9 +3781,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
      render_pass_begin_info.pNext = nullptr;
      render_pass_begin_info.renderPass = render_pass;
      render_pass_begin_info.framebuffer = framebuffer->framebuffer;
@@ -8431,7 +8637,7 @@ index 001f36b..35ae54b 100644
      render_pass_begin_info.clearValueCount = 0;
      render_pass_begin_info.pClearValues = nullptr;
      deferred_command_buffer_.CmdVkBeginRenderPass(&render_pass_begin_info,
-@@ -3258,10 +3790,12 @@ void VulkanCommandProcessor::EndRenderPass() {
+@@ -3258,10 +3795,12 @@ void VulkanCommandProcessor::EndRenderPass() {
    if (!in_render_pass_) {
      return;
    }
@@ -8448,7 +8654,7 @@ index 001f36b..35ae54b 100644
    }
    current_render_pass_ = VK_NULL_HANDLE;
    current_framebuffer_ = nullptr;
-@@ -3502,8 +4036,8 @@ VulkanCommandProcessor::ScratchBufferAcquisition VulkanCommandProcessor::Acquire
+@@ -3502,8 +4041,8 @@ VulkanCommandProcessor::ScratchBufferAcquisition VulkanCommandProcessor::Acquire
    scratch_buffer_ = new_scratch_buffer;
    scratch_buffer_size_ = size;
    // Not used yet, no need for a barrier.
@@ -8459,7 +8665,7 @@ index 001f36b..35ae54b 100644
    scratch_buffer_last_usage_submission_ = submission_current;
    scratch_buffer_used_ = true;
    return ScratchBufferAcquisition(*this, new_scratch_buffer, initial_stage_mask,
-@@ -3587,9 +4121,148 @@ Shader* VulkanCommandProcessor::LoadShader(xenos::ShaderType shader_type, uint32
+@@ -3587,9 +4126,148 @@ Shader* VulkanCommandProcessor::LoadShader(xenos::ShaderType shader_type, uint32
    return pipeline_cache_->LoadShader(shader_type, host_address, dword_count);
  }
  
@@ -8608,7 +8814,7 @@ index 001f36b..35ae54b 100644
  #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
    SCOPE_profile_cpu_f("gpu");
  #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
-@@ -3597,6 +4270,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3597,6 +4275,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
    const RegisterFile& regs = *register_file_;
    (void)index_buffer_info;
    auto draw_fail = [&](const char* stage) {
@@ -8616,7 +8822,7 @@ index 001f36b..35ae54b 100644
      auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
      REXGPU_ERROR(
          "Vulkan IssueDraw failed at {} "
-@@ -3616,6 +4290,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3616,6 +4295,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      return IssueCopy();
    }
  
@@ -8634,7 +8840,7 @@ index 001f36b..35ae54b 100644
    bool surface_pitch_is_zero = regs.Get<reg::RB_SURFACE_INFO>().surface_pitch == 0;
  
    const ui::vulkan::VulkanDevice::Properties& device_properties = GetVulkanDevice()->properties();
-@@ -3631,11 +4316,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3631,11 +4321,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
    pipeline_cache_->AnalyzeShaderUcode(*vertex_shader);
    bool memexport_used_vertex = vertex_shader->memexport_eM_written() != 0;
    if (memexport_used_vertex) {
@@ -8648,7 +8854,7 @@ index 001f36b..35ae54b 100644
      }
      draw_util::AddMemExportRanges(regs, *vertex_shader, memexport_ranges_);
    }
-@@ -3646,7 +4332,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3646,7 +4337,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
    if (surface_pitch_is_zero && is_rasterization_done) {
      // Doesn't actually draw.
      // Unlikely that zero would even really be legal though.
@@ -8657,7 +8863,7 @@ index 001f36b..35ae54b 100644
    }
    VulkanShader* pixel_shader = nullptr;
    if (is_rasterization_done) {
-@@ -3666,7 +4352,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3666,7 +4357,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      // cache.
      if (!memexport_used_vertex) {
        // This draw has no effect.
@@ -8666,7 +8872,7 @@ index 001f36b..35ae54b 100644
      }
    }
    bool memexport_used_pixel = pixel_shader && (pixel_shader->memexport_eM_written() != 0);
-@@ -3675,7 +4361,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3675,7 +4366,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        REXGPU_ERROR(
            "Pixel shader memexport draw encountered without "
            "fragmentStoresAndAtomics support");
@@ -8675,7 +8881,7 @@ index 001f36b..35ae54b 100644
      }
      draw_util::AddMemExportRanges(regs, *pixel_shader, memexport_ranges_);
    }
-@@ -3713,7 +4399,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3713,7 +4404,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      }
      if (!primitive_processing_result.host_draw_vertex_count) {
        // Nothing to draw.
@@ -8684,7 +8890,7 @@ index 001f36b..35ae54b 100644
      }
      if (primitive_processing_result.host_primitive_type == xenos::PrimitiveType::kTriangleFan) {
        // Vulkan uses the same fan-to-list conversion policy as D3D12.
-@@ -3721,7 +4407,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3721,7 +4412,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
            "PrimitiveProcessor returned triangle fan for Vulkan draw; expected "
            "triangle list conversion for D3D12 parity");
        assert_always();
@@ -8693,7 +8899,7 @@ index 001f36b..35ae54b 100644
      }
      // Tessellation and rectangle expansion variants for rasterization are
      // produced by the primitive processor and are handled by the Vulkan
-@@ -3734,7 +4420,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3734,7 +4425,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
          !Shader::IsHostVertexShaderTypeDomain(host_vertex_shader_type)) {
        REXGPU_ERROR("Unsupported Vulkan host vertex shader type {}",
                     uint32_t(host_vertex_shader_type));
@@ -8702,7 +8908,7 @@ index 001f36b..35ae54b 100644
      }
  
      // Shader modifications.
-@@ -3822,13 +4508,23 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3822,13 +4513,23 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
      uint64_t sampler_overflow_await_submission =
          texture_cache_->GetSubmissionToAwaitOnSamplerOverflow(samplers_overflowed_count);
      assert_true(sampler_overflow_await_submission <= GetCurrentSubmission());
@@ -8727,7 +8933,7 @@ index 001f36b..35ae54b 100644
    // Update the textures before most other work in the submission because
    // samplers depend on this (and in case of sampler overflow in a submission,
    // submissions must be split) - may perform dispatches and copying.
-@@ -3863,12 +4559,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3863,12 +4564,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
                                                  &pipeline_is_placeholder);
    if (REXCVAR_GET(async_shader_compilation) && pipeline_is_placeholder) {
      frame_used_async_placeholder_pipeline_ = true;
@@ -8743,7 +8949,7 @@ index 001f36b..35ae54b 100644
      deferred_command_buffer_.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
      current_guest_graphics_pipeline_ = pipeline;
      current_external_graphics_pipeline_ = VK_NULL_HANDLE;
-@@ -3894,6 +4592,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3894,6 +4597,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
          descriptor_sets_kept = std::min(
              descriptor_sets_kept, uint32_t(SpirvShaderTranslator::kDescriptorSetTexturesPixel));
        }
@@ -8754,7 +8960,7 @@ index 001f36b..35ae54b 100644
      } else {
        // No or unknown pipeline layout previously bound - all bindings are in an
        // indeterminate state.
-@@ -3986,9 +4688,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -3986,9 +4693,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        vfetch_bits_remaining &= ~(uint32_t(1) << j);
        uint32_t vfetch_index = i * 32 + j;
        uint64_t vfetch_bit = uint64_t(1) << (vfetch_index & 63);
@@ -8768,7 +8974,7 @@ index 001f36b..35ae54b 100644
        xenos::xe_gpu_vertex_fetch_t vfetch_constant = regs.GetVertexFetch(vfetch_index);
        switch (vfetch_constant.type) {
          case xenos::FetchConstantType::kVertex:
-@@ -4003,23 +4706,19 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4003,23 +4711,19 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
                "is incorrect behavior, but you can try bypassing this by "
                "launching Xenia with --gpu_allow_invalid_fetch_constants=true.",
                vfetch_index, vfetch_constant.dword_0, vfetch_constant.dword_1);
@@ -8795,7 +9001,7 @@ index 001f36b..35ae54b 100644
        }
        state.address = vfetch_constant.address;
        state.size = vfetch_constant.size;
-@@ -4037,7 +4736,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4037,7 +4741,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
            "Failed to request memexport stream at 0x{:08X} (size {}) in the "
            "shared memory",
            memexport_range_base_bytes, memexport_range.size_bytes);
@@ -8804,7 +9010,7 @@ index 001f36b..35ae54b 100644
      }
      memexport_extent_start = std::min(memexport_extent_start, memexport_range_base_bytes);
      memexport_extent_end =
-@@ -4048,7 +4747,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4048,7 +4752,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        REXGPU_ERROR(
            "Failed to request full shared memory residency for unresolved "
            "memexport destinations");
@@ -8813,7 +9019,7 @@ index 001f36b..35ae54b 100644
      }
    }
  
-@@ -4115,11 +4814,304 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4115,11 +4819,304 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
        render_target_cache_->last_update_render_pass(),
        render_target_cache_->last_update_framebuffer());
  
@@ -9119,7 +9325,7 @@ index 001f36b..35ae54b 100644
    } else {
      std::pair<VkBuffer, VkDeviceSize> index_buffer;
      switch (primitive_processing_result.index_buffer_type) {
-@@ -4151,9 +5143,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4151,9 +5148,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
              ? VK_INDEX_TYPE_UINT16
              : VK_INDEX_TYPE_UINT32);
      deferred_command_buffer_.CmdVkDrawIndexed(primitive_processing_result.host_draw_vertex_count, 1,
@@ -9137,7 +9343,7 @@ index 001f36b..35ae54b 100644
    // Invalidate textures in memexported memory and watch for changes.
    if (!memexport_ranges_.empty()) {
      for (const draw_util::MemExportRange& memexport_range : memexport_ranges_) {
-@@ -4184,6 +5183,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
+@@ -4184,6 +5188,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type, uint32_t
    return true;
  }
  
@@ -9145,7 +9351,7 @@ index 001f36b..35ae54b 100644
  bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFullPath(uint32_t total_size) {
    if (!total_size || memexport_ranges_.empty()) {
      return true;
-@@ -4222,7 +5222,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFullPath(uint32_t total_
+@@ -4222,7 +5227,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFullPath(uint32_t total_
                            VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
                            VK_ACCESS_HOST_READ_BIT);
  
@@ -9154,7 +9360,7 @@ index 001f36b..35ae54b 100644
      REXGPU_ERROR("Failed to await completion of Vulkan memexport readback");
      dfn.vkDestroyBuffer(device, readback_buffer, nullptr);
      dfn.vkFreeMemory(device, readback_memory, nullptr);
-@@ -4297,7 +5297,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_
+@@ -4297,7 +5302,7 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_
      }
  
      if (readback.buffers[index] != VK_NULL_HANDLE || readback.memories[index] != VK_NULL_HANDLE) {
@@ -9163,7 +9369,7 @@ index 001f36b..35ae54b 100644
          dfn.vkUnmapMemory(device, new_memory);
          dfn.vkDestroyBuffer(device, new_buffer, nullptr);
          dfn.vkFreeMemory(device, new_memory, nullptr);
-@@ -4382,6 +5382,9 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_
+@@ -4382,6 +5387,9 @@ bool VulkanCommandProcessor::IssueDraw_MemexportReadbackFastPath(uint32_t total_
  }
  
  bool VulkanCommandProcessor::IssueCopy() {
@@ -9173,7 +9379,7 @@ index 001f36b..35ae54b 100644
  #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
    SCOPE_profile_cpu_f("gpu");
  #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
-@@ -4391,10 +5394,22 @@ bool VulkanCommandProcessor::IssueCopy() {
+@@ -4391,10 +5399,22 @@ bool VulkanCommandProcessor::IssueCopy() {
    }
  
    ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(vulkan_readback_resolve));
@@ -9198,7 +9404,7 @@ index 001f36b..35ae54b 100644
    }
  
    return IssueCopy_ReadbackResolvePath();
-@@ -4406,8 +5421,12 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4406,8 +5426,12 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
    const VkDevice device = vulkan_device->device();
  
    uint32_t written_address, written_length;
@@ -9213,7 +9419,7 @@ index 001f36b..35ae54b 100644
      return false;
    }
  
-@@ -4420,6 +5439,13 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4420,6 +5444,13 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
    }
  
    ReadbackResolveMode readback_mode = GetReadbackResolveMode(REXCVAR_GET(vulkan_readback_resolve));
@@ -9227,7 +9433,7 @@ index 001f36b..35ae54b 100644
    if (readback_mode == ReadbackResolveMode::kDisabled) {
      return true;
    }
-@@ -4448,7 +5474,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4448,7 +5479,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
      }
  
      if (readback.buffers[index] != VK_NULL_HANDLE || readback.memories[index] != VK_NULL_HANDLE) {
@@ -9236,7 +9442,7 @@ index 001f36b..35ae54b 100644
          dfn.vkUnmapMemory(device, new_memory);
          dfn.vkDestroyBuffer(device, new_buffer, nullptr);
          dfn.vkFreeMemory(device, new_memory, nullptr);
-@@ -4489,6 +5515,9 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4489,6 +5520,9 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
  
      reg::RB_COPY_DEST_INFO copy_dest_info = register_file_->Get<reg::RB_COPY_DEST_INFO>();
      const FormatInfo* format_info = FormatInfo::Get(uint32_t(copy_dest_info.copy_dest_format));
@@ -9246,7 +9452,7 @@ index 001f36b..35ae54b 100644
      uint32_t bits_per_pixel = format_info->bits_per_pixel;
      if (bits_per_pixel != 8 && bits_per_pixel != 16 && bits_per_pixel != 32 &&
          bits_per_pixel != 64) {
-@@ -4533,7 +5562,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4533,7 +5567,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
        }
        if (resolve_downscale_buffer_ != VK_NULL_HANDLE ||
            resolve_downscale_buffer_memory_ != VK_NULL_HANDLE) {
@@ -9255,7 +9461,7 @@ index 001f36b..35ae54b 100644
            dfn.vkDestroyBuffer(device, new_buffer, nullptr);
            dfn.vkFreeMemory(device, new_memory, nullptr);
            return true;
-@@ -4654,7 +5683,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4654,7 +5688,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
    uint32_t read_index = write_index;
    if (use_delayed_sync) {
      read_index = 1 - write_index;
@@ -9264,7 +9470,7 @@ index 001f36b..35ae54b 100644
      return true;
    }
  
-@@ -4664,7 +5693,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4664,7 +5698,7 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
                             readback.mapped_data[read_index] == nullptr)) {
      is_cache_miss = true;
      read_index = write_index;
@@ -9273,7 +9479,7 @@ index 001f36b..35ae54b 100644
        return true;
      }
    }
-@@ -4677,10 +5706,60 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
+@@ -4677,10 +5711,60 @@ bool VulkanCommandProcessor::IssueCopy_ReadbackResolvePath() {
      readback_memory_range.memory = readback.memories[read_index];
      readback_memory_range.offset = 0;
      readback_memory_range.size = VK_WHOLE_SIZE;
@@ -9336,7 +9542,7 @@ index 001f36b..35ae54b 100644
        std::memcpy(destination, readback.mapped_data[read_index], written_length);
      }
    }
-@@ -4867,6 +5946,11 @@ bool VulkanCommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_addres
+@@ -4867,6 +5951,11 @@ bool VulkanCommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_addres
      return false;
    }
  
@@ -9348,7 +9554,7 @@ index 001f36b..35ae54b 100644
    uint32_t host_index = active_occlusion_query_.host_index;
    active_occlusion_query_ = {};
  
-@@ -4886,7 +5970,7 @@ bool VulkanCommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_addres
+@@ -4886,7 +5975,7 @@ bool VulkanCommandProcessor::EndGuestOcclusionQuery(uint32_t sample_count_addres
    if (!EndSubmission(false)) {
      return false;
    }
@@ -9357,7 +9563,7 @@ index 001f36b..35ae54b 100644
      return false;
    }
  
-@@ -4943,7 +6027,9 @@ void VulkanCommandProcessor::WriteGuestOcclusionResult(uint32_t sample_count_add
+@@ -4943,7 +6032,9 @@ void VulkanCommandProcessor::WriteGuestOcclusionResult(uint32_t sample_count_add
    sample_counts->StencilFail_B = 0;
  }
  
@@ -9368,7 +9574,7 @@ index 001f36b..35ae54b 100644
    // Only report once, no need to retry a wait that won't succeed anyway.
    if (device_lost_) {
      return;
-@@ -4970,9 +6056,20 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+@@ -4970,9 +6061,20 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
      // defined by vkQueueSubmit additionally include in the first
      // synchronization scope all commands that occur earlier in submission
      // order."
@@ -9392,7 +9598,7 @@ index 001f36b..35ae54b 100644
      if (wait_result == VK_SUCCESS) {
        fences_awaited += await_submission - submission_completed_;
      } else {
-@@ -5032,7 +6129,19 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+@@ -5032,7 +6134,19 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
      if (command_buffer_pair.first > submission_completed_) {
        break;
      }
@@ -9413,7 +9619,7 @@ index 001f36b..35ae54b 100644
      command_buffers_submitted_.pop_front();
    }
  
-@@ -5088,7 +6197,9 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
+@@ -5088,7 +6202,9 @@ void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_su
  }
  
  bool VulkanCommandProcessor::CanEndSubmissionImmediately() const {
@@ -9424,7 +9630,7 @@ index 001f36b..35ae54b 100644
  }
  
  bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
-@@ -5111,7 +6222,43 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+@@ -5111,7 +6227,43 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
    // is still available, and whether the await was successful.
    uint64_t await_submission =
        is_opening_frame ? closed_frame_submissions_[frame_current_ % kMaxFramesInFlight] : 0;
@@ -9469,7 +9675,7 @@ index 001f36b..35ae54b 100644
    if (device_lost_ || submission_completed_ < await_submission) {
      return false;
    }
-@@ -5230,6 +6377,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
+@@ -5230,6 +6382,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
  }
  
  bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
@@ -9477,7 +9683,7 @@ index 001f36b..35ae54b 100644
    const ui::vulkan::VulkanDevice* const vulkan_device = GetVulkanDevice();
    const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
    const VkDevice device = vulkan_device->device();
-@@ -5288,6 +6436,14 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5288,6 +6441,14 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
          return false;
        }
        command_buffers_writable_.push_back(command_buffer);
@@ -9492,7 +9698,7 @@ index 001f36b..35ae54b 100644
      }
    }
  
-@@ -5310,7 +6466,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5310,7 +6471,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
  
      EndRenderPass();
  
@@ -9504,7 +9710,7 @@ index 001f36b..35ae54b 100644
  
      render_target_cache_->EndSubmission();
  
-@@ -5385,7 +6544,51 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5385,7 +6549,51 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
        REXGPU_ERROR("Failed to begin a Vulkan command buffer");
        return false;
      }
@@ -9557,7 +9763,7 @@ index 001f36b..35ae54b 100644
      if (dfn.vkEndCommandBuffer(command_buffer.buffer) != VK_SUCCESS) {
        REXGPU_ERROR("Failed to end a Vulkan command buffer");
        return false;
-@@ -5415,8 +6618,11 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5415,8 +6623,11 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
      }
      VkResult submit_result;
      {
@@ -9571,7 +9777,7 @@ index 001f36b..35ae54b 100644
        submit_result = dfn.vkQueueSubmit(queue_acquisition.queue(), 1, &submit_info, fence);
      }
      if (submit_result != VK_SUCCESS) {
-@@ -5429,7 +6635,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
+@@ -5429,7 +6640,10 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
        }
        return false;
      }
@@ -9582,7 +9788,7 @@ index 001f36b..35ae54b 100644
      current_submission_wait_stage_masks_.clear();
      for (VkSemaphore semaphore : current_submission_wait_semaphores_) {
        submissions_in_flight_semaphores_.emplace_back(submission_current, semaphore);
-@@ -6242,9 +7451,9 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
+@@ -6242,9 +7456,9 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
        // losing blending correctness, but getting the full range.
        color_exp_bias -= 5;
      }
@@ -13274,7 +13480,7 @@ index 6788214..af44e57 100644
      case Usage::kTransferDestination:
        stage_mask = VK_PIPELINE_STAGE_TRANSFER_BIT;
 diff --git a/src/graphics/vulkan/texture_cache.cpp b/src/graphics/vulkan/texture_cache.cpp
-index ecbd940..a10a2bd 100644
+index ecbd940..efbaf67 100644
 --- a/src/graphics/vulkan/texture_cache.cpp
 +++ b/src/graphics/vulkan/texture_cache.cpp
 @@ -12,12 +12,18 @@
@@ -13977,11 +14183,24 @@ index ecbd940..a10a2bd 100644
    // TODO(Triang3l): S3TC -> ETC2 / EAC (a huge research topic).
    HostFormatPair& host_format_dxt1 = host_formats_[uint32_t(xenos::TextureFormat::k_DXT1)];
    assert_true(host_format_dxt1.format_unsigned.format == VK_FORMAT_BC1_RGBA_UNORM_BLOCK);
-@@ -2469,6 +2964,33 @@ bool VulkanTextureCache::Initialize() {
+@@ -2469,6 +2964,46 @@ bool VulkanTextureCache::Initialize() {
    if ((format_properties.optimalTilingFeatures & kLinearFilterFeatures) != kLinearFilterFeatures) {
      host_format_dxt1.format_unsigned.load_shader = kLoadShaderIndexDXT1ToRGBA8;
      host_format_dxt1.format_unsigned.format = VK_FORMAT_R8G8B8A8_UNORM;
-+    if (REXCVAR_GET(vulkan_dxt1_compact)) {
++    bool dxt1_compact = REXCVAR_GET(vulkan_dxt1_compact);
++#ifdef __ANDROID__
++    // Mali cannot sample BC1, so every DXT1 texture would be expanded to 32 bpp
++    // RGBA8. Default to the 16 bpp RGB5A1 decode there, unless the flag was set
++    // explicitly (command line, environment or the launcher preference).
++    const bool dxt1_compact_forced_explicitly =
++        rex::cvar::GetFlagSource("vulkan_dxt1_compact") != rex::cvar::Source::kDefault;
++    if (!dxt1_compact_forced_explicitly && !dxt1_compact &&
++        device_properties.vendorID == 0x13B5) {
++      dxt1_compact = true;
++      REXGPU_INFO("[TEXTURE_COMPACT] Mali GPU detected; enabling the 16 bpp BC1 decode by default");
++    }
++#endif  // __ANDROID__
++    if (dxt1_compact) {
 +      VkFormatProperties compact_properties;
 +      ifn.vkGetPhysicalDeviceFormatProperties(physical_device, VK_FORMAT_R5G5B5A1_UNORM_PACK16,
 +                                             &compact_properties);
@@ -14011,7 +14230,7 @@ index ecbd940..a10a2bd 100644
      host_format_dxt1.format_unsigned.block_compressed = false;
      host_formats_[uint32_t(xenos::TextureFormat::k_DXT1_AS_16_16_16_16)] = host_format_dxt1;
    }
-@@ -2804,8 +3326,12 @@ bool VulkanTextureCache::Initialize() {
+@@ -2804,8 +3339,12 @@ bool VulkanTextureCache::Initialize() {
                       sizeof(shaders::texture_load_r4g4b4a4_a4r4g4b4_cs));
    load_shader_code[kLoadShaderIndexRGBA4ToRGBA8] = std::make_pair(
        shaders::texture_load_r4g4b4a4_rgba8_cs, sizeof(shaders::texture_load_r4g4b4a4_rgba8_cs));
@@ -14024,7 +14243,7 @@ index ecbd940..a10a2bd 100644
    load_shader_code[kLoadShaderIndexBGRG8ToRGB8] = std::make_pair(
        shaders::texture_load_bgrg8_rgb8_cs, sizeof(shaders::texture_load_bgrg8_rgb8_cs));
    load_shader_code[kLoadShaderIndexR10G11B11ToRGBA16] = std::make_pair(
-@@ -2834,6 +3360,8 @@ bool VulkanTextureCache::Initialize() {
+@@ -2834,6 +3373,8 @@ bool VulkanTextureCache::Initialize() {
                       sizeof(shaders::texture_load_rgba16_snorm_float_cs));
    load_shader_code[kLoadShaderIndexDXT1ToRGBA8] = std::make_pair(
        shaders::texture_load_dxt1_rgba8_cs, sizeof(shaders::texture_load_dxt1_rgba8_cs));
@@ -14801,7 +15020,7 @@ index 77bce25..4167b9f 100644
        rex::thread::Sleep(std::chrono::milliseconds(timeout_ms));
      }
 diff --git a/src/ui/CMakeLists.txt b/src/ui/CMakeLists.txt
-index 5bd3dc5..341408e 100644
+index 5bd3dc5..5a7db99 100644
 --- a/src/ui/CMakeLists.txt
 +++ b/src/ui/CMakeLists.txt
 @@ -64,7 +64,11 @@ if(REXGLUE_USE_D3D12)
@@ -14817,7 +15036,21 @@ index 5bd3dc5..341408e 100644
      set(REXUI_PLATFORM_SOURCES
          surface_win.cpp
      )
-@@ -146,7 +150,17 @@ if(REXGLUE_USE_VULKAN)
+@@ -124,6 +128,13 @@ if(REXGLUE_FIDELITYFX_SOURCE_DIR AND EXISTS "${REXGLUE_FIDELITYFX_SOURCE_DIR}/sd
+     target_compile_definitions(rexui PRIVATE REX_HAS_FIDELITYFX_SDK=1)
+ endif()
+ 
++# CAS and spatial FSR 1.0 only need the prebuilt guest output SPIR-V shaders, so
++# they can be enabled without the FidelityFX SDK headers or the FFX API runtime.
++# This is what makes the effect selectable on Android arm64.
++if(REXGLUE_ENABLE_FIDELITYFX_SPATIAL)
++    target_compile_definitions(rexui PRIVATE REX_HAS_FIDELITYFX_SPATIAL=1)
++endif()
++
+ set(REXUI_HAS_FIDELITYFX_RUNTIME OFF)
+ if(TARGET amd_fidelityfx_vk)
+     target_link_libraries(rexui PRIVATE amd_fidelityfx_vk)
+@@ -146,7 +157,17 @@ if(REXGLUE_USE_VULKAN)
  endif()
  
  # Platform-specific dependencies
@@ -14836,7 +15069,7 @@ index 5bd3dc5..341408e 100644
      find_package(PkgConfig REQUIRED)
      pkg_check_modules(X11_XCB REQUIRED x11-xcb)
      # Required, not optional: vulkan/api.h pulls in <wayland-client.h> on every
-@@ -173,4 +187,3 @@ endif()
+@@ -173,4 +194,3 @@ endif()
  if(REXGLUE_USE_D3D12)
      target_link_libraries(rexui PUBLIC dxc-headers)
  endif()
@@ -15244,7 +15477,7 @@ index 0000000..583cd9d
 +  0x000100fd, 0x00010038,
 +};
 diff --git a/src/ui/presenter.cpp b/src/ui/presenter.cpp
-index 7360ed9..eea82dd 100644
+index 7360ed9..6ce7b27 100644
 --- a/src/ui/presenter.cpp
 +++ b/src/ui/presenter.cpp
 @@ -9,6 +9,11 @@
@@ -15280,21 +15513,62 @@ index 7360ed9..eea82dd 100644
  REXCVAR_DEFINE_BOOL(present_letterbox, true, "UI/Presenter",
                      "Enable letterboxing for non-native aspect ratios");
  
-@@ -42,8 +61,13 @@ REXCVAR_DEFINE_INT32(present_safe_area_y, 90, "UI/Presenter",
+@@ -40,10 +59,21 @@ REXCVAR_DEFINE_INT32(present_safe_area_y, 90, "UI/Presenter",
+                      "Vertical safe area percentage (0-100)")
+     .range(0, 100);
  
- #if defined(REX_HAS_FIDELITYFX_SDK)
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
  REXCVAR_DEFINE_STRING(present_effect, "bilinear", "UI/Presenter",
-+#if defined(REX_PLATFORM_WINDOWS)
++#if defined(REX_PLATFORM_WINDOWS) && REX_HAS_FFX_TEMPORAL
 +                      "Guest output effect: bilinear, cas, fsr, fsr_fast, fsr2, fsr3")
 +    .allowed({"bilinear", "cas", "fsr", "fsr_fast", "fsr2", "fsr3"})
-+#else
++#elif defined(REX_PLATFORM_WINDOWS)
++                      "Guest output effect: bilinear, cas, fsr, fsr_fast")
++    .allowed({"bilinear", "cas", "fsr", "fsr_fast"})
++#elif REX_HAS_FFX_TEMPORAL
                        "Guest output effect: bilinear, cas, fsr, fsr2, fsr3")
      .allowed({"bilinear", "cas", "fsr", "fsr2", "fsr3"})
++#else
++                      "Guest output effect: bilinear, cas, fsr")
++    .allowed({"bilinear", "cas", "fsr"})
 +#endif
      .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
  
  REXCVAR_DEFINE_DOUBLE(present_cas_additional_sharpness,
-@@ -99,6 +123,11 @@ GuestOutputPaintConfig::Effect ParsePresentEffect(const std::string& effect_name
+@@ -65,17 +95,21 @@ REXCVAR_DEFINE_DOUBLE(present_fsr_sharpness_reduction,
+     .range(rex::ui::Presenter::GuestOutputPaintConfig::kFsrSharpnessReductionMin,
+            rex::ui::Presenter::GuestOutputPaintConfig::kFsrSharpnessReductionMax)
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
++#endif  // REX_HAS_FFX_SPATIAL
+ 
++#if REX_HAS_FFX_TEMPORAL
+ REXCVAR_DEFINE_STRING(
+     present_fsr_quality_mode, "auto", "UI/Presenter",
+     "Temporal FSR quality mode: auto, nativeaa, quality, balanced, performance, ultra_performance")
+     .allowed({"auto", "nativeaa", "quality", "balanced", "performance", "ultra_performance"})
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+-#else
++#endif  // REX_HAS_FFX_TEMPORAL
++
++#if !REX_HAS_FFX_SPATIAL
+ REXCVAR_DEFINE_STRING(present_effect, "bilinear", "UI/Presenter", "Guest output effect: bilinear")
+     .allowed({"bilinear"})
+     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+-#endif
++#endif  // !REX_HAS_FFX_SPATIAL
+ 
+ REXCVAR_DEFINE_BOOL(present_dither, false, "UI/Presenter",
+                     "Enable output dithering in the final present pass")
+@@ -92,24 +126,31 @@ GuestOutputPaintConfig::Effect ParsePresentEffect(const std::string& effect_name
+   std::string lowered = effect_name;
+   std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                  [](unsigned char c) { return char(std::tolower(c)); });
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+   if (lowered == "cas") {
+     return GuestOutputPaintConfig::Effect::kCas;
+   }
    if (lowered == "fsr") {
      return GuestOutputPaintConfig::Effect::kFsr;
    }
@@ -15303,10 +15577,54 @@ index 7360ed9..eea82dd 100644
 +    return GuestOutputPaintConfig::Effect::kFsrFast;
 +  }
 +#endif
++#endif  // REX_HAS_FFX_SPATIAL
++#if REX_HAS_FFX_TEMPORAL
    if (lowered == "fsr2") {
      return GuestOutputPaintConfig::Effect::kFsr2;
    }
-@@ -416,6 +445,9 @@ void Presenter::OnSurfaceResizeFromUIThread() {
+   if (lowered == "fsr3") {
+     return GuestOutputPaintConfig::Effect::kFsr3;
+   }
+-#endif
++#endif  // REX_HAS_FFX_TEMPORAL
+   return GuestOutputPaintConfig::Effect::kBilinear;
+ }
+ 
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_TEMPORAL
+ bool IsTemporalFsrCompatibilityEffect(GuestOutputPaintConfig::Effect effect) {
+   return effect == GuestOutputPaintConfig::Effect::kFsr2 ||
+          effect == GuestOutputPaintConfig::Effect::kFsr3;
+@@ -249,23 +290,25 @@ void LogTemporalFsrQualityModeInputLimitOnce() {
+         "guest output; using guest output size");
+   }
+ }
+-#endif  // defined(REX_HAS_FIDELITYFX_SDK)
++#endif  // REX_HAS_FFX_TEMPORAL
+ 
+ GuestOutputPaintConfig BuildGuestOutputPaintConfigFromCVar() {
+   GuestOutputPaintConfig config;
+   GuestOutputPaintConfig::Effect parsed_effect = ParsePresentEffect(REXCVAR_GET(present_effect));
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_TEMPORAL
+   if (IsTemporalFsrCompatibilityEffect(parsed_effect)) {
+     LogTemporalFsrCompatibilityPathOnce();
+   }
+ #endif
+   config.SetAllowOverscanCutoff(REXCVAR_GET(present_allow_overscan_cutoff));
+   config.SetEffect(parsed_effect);
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+   config.SetCasAdditionalSharpness(float(REXCVAR_GET(present_cas_additional_sharpness)));
+   config.SetFsrMaxUpsamplingPasses(
+       uint32_t(std::max(int32_t(1), REXCVAR_GET(present_fsr_max_upsampling_passes))));
+   config.SetFsrSharpnessReduction(float(REXCVAR_GET(present_fsr_sharpness_reduction)));
++#endif
++#if REX_HAS_FFX_TEMPORAL
+   config.SetFsrQualityMode(ParsePresentFsrQualityMode(REXCVAR_GET(present_fsr_quality_mode)));
+ #endif
+   config.SetDither(REXCVAR_GET(present_dither));
+@@ -416,6 +459,9 @@ void Presenter::OnSurfaceResizeFromUIThread() {
  }
  
  void Presenter::PaintFromUIThread(bool force_paint) {
@@ -15316,7 +15634,7 @@ index 7360ed9..eea82dd 100644
    // If there is no surface, this will be a no-op, nothing outdated, nothing to
    // paint. However, an explicit monitor check is needed because UI framerate
    // limiting may be tied to signals from the OS for the monitor - but painting
-@@ -453,6 +485,11 @@ void Presenter::PaintFromUIThread(bool force_paint) {
+@@ -453,6 +499,11 @@ void Presenter::PaintFromUIThread(bool force_paint) {
    bool request_repaint_at_tick = false;
    bool request_repaint_immediately = false;
    if (do_paint) {
@@ -15328,7 +15646,7 @@ index 7360ed9..eea82dd 100644
      // Take ownership of painting if it's currently owned by the guest output
      // thread (downgrade from kGuestOutputThreadImmediately to
      // kUIThreadOnRequest - not to kNone so if during this paint a new guest
-@@ -484,6 +521,11 @@ void Presenter::PaintFromUIThread(bool force_paint) {
+@@ -484,6 +535,11 @@ void Presenter::PaintFromUIThread(bool force_paint) {
        WaitForUITickFromUIThread();
  
        paint_result = PaintAndPresent(draw_ui);
@@ -15340,7 +15658,7 @@ index 7360ed9..eea82dd 100644
        if (surface_paint_connection_state_ == SurfacePaintConnectionState::kConnectedOutdated) {
          // Request another PaintFromUIThread which will try to recover from the
          // outdated connection in the next frame (not immediately, so the
-@@ -561,13 +603,13 @@ bool Presenter::RefreshGuestOutput(
+@@ -561,13 +617,13 @@ bool Presenter::RefreshGuestOutput(
    if (is_active) {
      if (!RefreshGuestOutputImpl(guest_output_mailbox_writable_, frontbuffer_width,
                                  frontbuffer_height, refresher, writable_properties.is_8bpc)) {
@@ -15357,7 +15675,7 @@ index 7360ed9..eea82dd 100644
      // Request presenting a blank image if there was a true image previously,
      // but not now.
      if (!guest_output_active_last_refresh_) {
-@@ -593,6 +635,8 @@ bool Presenter::RefreshGuestOutput(
+@@ -593,6 +649,8 @@ bool Presenter::RefreshGuestOutput(
        (last_acquired_and_ready & 3) | (guest_output_mailbox_writable_ << 2),
        std::memory_order_acq_rel, std::memory_order_relaxed)) {}
    // Now, it's known that `ready == writable` on the host presentation side.
@@ -15366,7 +15684,7 @@ index 7360ed9..eea82dd 100644
    // Take the next `writable` with this assumption about its current value in
    // mind.
    uint32_t last_acquired = last_acquired_and_ready & 3;
-@@ -617,6 +661,12 @@ bool Presenter::RefreshGuestOutput(
+@@ -617,6 +675,12 @@ bool Presenter::RefreshGuestOutput(
    PaintResult paint_result = PaintResult::kNotPresented;
    {
      std::lock_guard<std::mutex> paint_mode_mutex_lock(paint_mode_mutex_);
@@ -15379,7 +15697,63 @@ index 7360ed9..eea82dd 100644
      switch (paint_mode_) {
        case PaintMode::kNone:
          // Neither painting nor window paint requesting is accessible.
-@@ -870,6 +920,9 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
+@@ -659,13 +723,20 @@ void Presenter::SetGuestOutputPaintConfigFromUIThread(const GuestOutputPaintConf
+     modified = true;
+     request_repaint = true;
+   }
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
++  // Which effects read the CAS / RCAS sharpness constants.
++  const auto effect_uses_fsr_rcas = [](GuestOutputPaintConfig::Effect effect) {
++    bool uses_fsr_rcas = effect == GuestOutputPaintConfig::Effect::kFsr;
++#if REX_HAS_FFX_TEMPORAL
++    uses_fsr_rcas |= effect == GuestOutputPaintConfig::Effect::kFsr2 ||
++                     effect == GuestOutputPaintConfig::Effect::kFsr3;
++#endif  // REX_HAS_FFX_TEMPORAL
++    return uses_fsr_rcas;
++  };
+   if (guest_output_paint_config_.GetFsrSharpnessReduction() !=
+       new_config.GetFsrSharpnessReduction()) {
+     modified = true;
+-    if (new_config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr ||
+-        new_config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr2 ||
+-        new_config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr3) {
++    if (effect_uses_fsr_rcas(new_config.GetEffect())) {
+       request_repaint = true;
+     }
+   }
+@@ -673,18 +744,16 @@ void Presenter::SetGuestOutputPaintConfigFromUIThread(const GuestOutputPaintConf
+       new_config.GetCasAdditionalSharpness()) {
+     modified = true;
+     if (new_config.GetEffect() == GuestOutputPaintConfig::Effect::kCas ||
+-        new_config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr ||
+-        new_config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr2 ||
+-        new_config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr3) {
++        effect_uses_fsr_rcas(new_config.GetEffect())) {
+       request_repaint = true;
+     }
+   }
+-#endif
++#endif  // REX_HAS_FFX_SPATIAL
+   if (guest_output_paint_config_.GetDither() != new_config.GetDither()) {
+     modified = true;
+     request_repaint = true;
+   }
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_TEMPORAL
+   if (guest_output_paint_config_.GetFsrQualityMode() != new_config.GetFsrQualityMode()) {
+     modified = true;
+     if (new_config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr2 ||
+@@ -692,7 +761,7 @@ void Presenter::SetGuestOutputPaintConfigFromUIThread(const GuestOutputPaintConf
+       request_repaint = true;
+     }
+   }
+-#endif
++#endif  // REX_HAS_FFX_TEMPORAL
+   if (modified) {
+     {
+       std::unique_lock<std::mutex> config_lock(guest_output_paint_config_mutex_);
+@@ -870,6 +939,9 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
    // For safety such as division by zero prevention.
    if (!properties.IsActive() || !host_rt_width || !host_rt_height ||
        !surface_width_in_paint_connection_ || !surface_height_in_paint_connection_) {
@@ -15389,31 +15763,78 @@ index 7360ed9..eea82dd 100644
      return flow;
    }
  
-@@ -1033,6 +1086,9 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
- #if defined(REX_HAS_FIDELITYFX_SDK)
-   if (config.GetEffect() == GuestOutputPaintConfig::Effect::kCas ||
-       config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr ||
+@@ -1030,11 +1102,18 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
+   uint32_t output_width_clamped = std::min(output_width, max_rt_width);
+   uint32_t output_height_clamped = std::min(output_height, max_rt_height);
+ 
+-#if defined(REX_HAS_FIDELITYFX_SDK)
+-  if (config.GetEffect() == GuestOutputPaintConfig::Effect::kCas ||
+-      config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr ||
+-      config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr2 ||
+-      config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr3) {
++#if REX_HAS_FFX_SPATIAL
++  const GuestOutputPaintConfig::Effect configured_effect = config.GetEffect();
++  bool configured_effect_uses_ffx = configured_effect == GuestOutputPaintConfig::Effect::kCas ||
++                                    configured_effect == GuestOutputPaintConfig::Effect::kFsr;
 +#if defined(REX_PLATFORM_WINDOWS)
-+      config.GetEffect() == GuestOutputPaintConfig::Effect::kFsrFast ||
++  configured_effect_uses_ffx |= configured_effect == GuestOutputPaintConfig::Effect::kFsrFast;
 +#endif
-       config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr2 ||
-       config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr3) {
++#if REX_HAS_FFX_TEMPORAL
++  configured_effect_uses_ffx |= configured_effect == GuestOutputPaintConfig::Effect::kFsr2 ||
++                                configured_effect == GuestOutputPaintConfig::Effect::kFsr3;
++#endif  // REX_HAS_FFX_TEMPORAL
++  if (configured_effect_uses_ffx) {
      // FidelityFX Super Resolution and Contrast Adaptive Sharpening only work
-@@ -1061,7 +1117,12 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
-     bool temporal_quality_mode_forced =
+     // good for up to 2x2 upscaling due to the way they fetch texels.
+     // CAS is primarily a sharpening filter, not an upscaling one (its upscaling
+@@ -1056,12 +1135,22 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
+       ffx_last_size.first = properties.frontbuffer_width;
+       ffx_last_size.second = properties.frontbuffer_height;
+     }
+-    bool is_temporal_effect = config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr2 ||
+-                              config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr3;
+-    bool temporal_quality_mode_forced =
++#if REX_HAS_FFX_TEMPORAL
++    const bool is_temporal_effect = configured_effect == GuestOutputPaintConfig::Effect::kFsr2 ||
++                                    configured_effect == GuestOutputPaintConfig::Effect::kFsr3;
++    const bool temporal_quality_mode_forced =
          is_temporal_effect &&
          config.GetFsrQualityMode() != GuestOutputPaintConfig::FsrQualityMode::kAuto;
 -    if ((config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr || is_temporal_effect) &&
-+    bool spatial_fsr_effect = config.GetEffect() == GuestOutputPaintConfig::Effect::kFsr;
++#else
++    constexpr bool is_temporal_effect = false;
++    constexpr bool temporal_quality_mode_forced = false;
++#endif  // REX_HAS_FFX_TEMPORAL
++    bool spatial_fsr_effect = configured_effect == GuestOutputPaintConfig::Effect::kFsr;
 +#if defined(REX_PLATFORM_WINDOWS)
-+    bool fast_spatial_fsr_effect = config.GetEffect() == GuestOutputPaintConfig::Effect::kFsrFast;
++    bool fast_spatial_fsr_effect = configured_effect == GuestOutputPaintConfig::Effect::kFsrFast;
 +    spatial_fsr_effect |= fast_spatial_fsr_effect;
-+#endif
++#endif  // defined(REX_PLATFORM_WINDOWS)
 +    if ((spatial_fsr_effect || is_temporal_effect) &&
          ((ffx_last_size.first < output_width_clamped ||
            ffx_last_size.second < output_height_clamped) ||
           temporal_quality_mode_forced)) {
-@@ -1126,9 +1187,23 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
+@@ -1070,6 +1159,7 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
+       // EASU will always write to intermediate images, and RCAS supports only
+       // 1:1.
+       if (is_temporal_effect) {
++#if REX_HAS_FFX_TEMPORAL
+         uint32_t temporal_input_width = ffx_last_size.first;
+         uint32_t temporal_input_height = ffx_last_size.second;
+         uint32_t quality_mode_render_width = 0;
+@@ -1110,6 +1200,11 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
+         assert_true(flow.effect_count < flow.effects.size());
+         flow.effect_output_sizes[flow.effect_count] = ffx_last_size;
+         flow.effects[flow.effect_count++] = GuestOutputPaintEffect::kFsrEasu;
++#else  // REX_HAS_FFX_TEMPORAL
++        // Temporal FSR is not compiled into this build; the effect selection
++        // cannot produce it.
++        assert_always();
++#endif  // REX_HAS_FFX_TEMPORAL
+       } else {
+         uint32_t easu_max_passes = config.GetFsrMaxUpsamplingPasses();
+         uint32_t easu_pass_count = 0;
+@@ -1126,9 +1221,23 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
          }
        }
        assert_true(flow.effect_count < flow.effects.size());
@@ -15440,7 +15861,34 @@ index 7360ed9..eea82dd 100644
        // AMD FidelityFX Contrast Adaptive Sharpening - sharpen or downsample, or
        // upsample up to 2x2 if CAS is specified to be used for upscaling too.
        // Using the unclamped output size as CAS may be the last pass - if a
-@@ -1313,11 +1388,18 @@ Presenter::PaintMode Presenter::GetDesiredPaintModeFromUIThread(bool is_paintabl
+@@ -1145,7 +1254,7 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
+                                               : GuestOutputPaintEffect::kCasResample;
+     }
+   }
+-#endif  // defined(REX_HAS_FIDELITYFX_SDK)
++#endif  // REX_HAS_FFX_SPATIAL
+ 
+   std::pair<uint32_t, uint32_t>* last_pre_bilinear_effect_size =
+       flow.effect_count ? &flow.effect_output_sizes[flow.effect_count - 1] : nullptr;
+@@ -1156,7 +1265,7 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
+     // Clamp the output size of the last effect to the maximum render target
+     // size because it will go to an intermediate image now.
+     if (last_pre_bilinear_effect_size) {
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+       // RCAS only works for 1:1, clamping must be done explicitly for FSR.
+       assert_false(flow.effects[flow.effect_count - 1] == GuestOutputPaintEffect::kFsrRcas &&
+                    (last_pre_bilinear_effect_size->first > max_rt_width ||
+@@ -1188,7 +1297,7 @@ Presenter::GuestOutputPaintFlow Presenter::GetGuestOutputPaintFlow(
+           last_effect = GuestOutputPaintEffect::kBilinearDither;
+         }
+         break;
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+       case GuestOutputPaintEffect::kCasSharpen:
+         last_effect = GuestOutputPaintEffect::kCasSharpenDither;
+         break;
+@@ -1313,11 +1422,18 @@ Presenter::PaintMode Presenter::GetDesiredPaintModeFromUIThread(bool is_paintabl
    if (!REXCVAR_GET(host_present_from_non_ui_thread)) {
      return PaintMode::kUIThreadOnRequest;
    }
@@ -15459,7 +15907,7 @@ index 7360ed9..eea82dd 100644
    if (!ui_drawers_.empty()) {
      // The UI can be drawn only by the UI thread, and it needs to be drawn -
      // paint in the UI thread.
-@@ -1356,6 +1438,7 @@ void Presenter::UpdateSurfacePaintConnectionFromUIThread(bool* repaint_needed_ou
+@@ -1356,6 +1472,7 @@ void Presenter::UpdateSurfacePaintConnectionFromUIThread(bool* repaint_needed_ou
    // If the connection state is kUnconnectedSurfaceReportedUnusable, the
    // implementation has reported that the surface is not usable by the presenter
    // at all, and it's pointless to retry connecting to it.
@@ -15467,7 +15915,7 @@ index 7360ed9..eea82dd 100644
    if (surface_paint_connection_state_ !=
        SurfacePaintConnectionState::kUnconnectedSurfaceReportedUnusable) {
      uint32_t surface_width = 0, surface_height = 0;
-@@ -1372,6 +1455,9 @@ void Presenter::UpdateSurfacePaintConnectionFromUIThread(bool* repaint_needed_ou
+@@ -1372,6 +1489,9 @@ void Presenter::UpdateSurfacePaintConnectionFromUIThread(bool* repaint_needed_ou
            *surface_, surface_width, surface_height,
            surface_paint_connection_state_ == SurfacePaintConnectionState::kConnectedPaintable,
            is_vsync_implicit);
@@ -15477,7 +15925,7 @@ index 7360ed9..eea82dd 100644
        switch (connect_result) {
          case SurfacePaintConnectResult::kSuccess:
            if (repaint_needed_out) {
-@@ -1408,6 +1494,9 @@ void Presenter::UpdateSurfacePaintConnectionFromUIThread(bool* repaint_needed_ou
+@@ -1408,6 +1528,9 @@ void Presenter::UpdateSurfacePaintConnectionFromUIThread(bool* repaint_needed_ou
  }
  
  bool Presenter::RequestPaintOrConnectionRecoveryViaWindow(bool force_ui_thread_paint_tick) {
@@ -15487,7 +15935,7 @@ index 7360ed9..eea82dd 100644
    // Can be called from any thread if an existing window_ is available in it,
    // and it's known to have a Surface that will be the same throughout this
    // call - not doing any checks whether this request can be satisfied
-@@ -1415,13 +1504,23 @@ bool Presenter::RequestPaintOrConnectionRecoveryViaWindow(bool force_ui_thread_p
+@@ -1415,13 +1538,23 @@ bool Presenter::RequestPaintOrConnectionRecoveryViaWindow(bool force_ui_thread_p
    assert_not_null(window_);
    assert_not_null(surface_);
    if (ui_thread_paint_requested_.exchange(true, std::memory_order_relaxed)) {
@@ -15513,7 +15961,7 @@ index 7360ed9..eea82dd 100644
    return true;
  }
  
-@@ -1498,6 +1597,8 @@ Presenter::PaintResult Presenter::PaintAndPresent(bool execute_ui_drawers) {
+@@ -1498,6 +1631,8 @@ Presenter::PaintResult Presenter::PaintAndPresent(bool execute_ui_drawers) {
    assert_false(execute_ui_drawers && !is_in_ui_thread_paint_);
    assert_true(surface_paint_connection_state_ == SurfacePaintConnectionState::kConnectedPaintable);
    PaintResult result = PaintAndPresentImpl(execute_ui_drawers);
@@ -17219,7 +17667,7 @@ index 914b311..65f995e 100644
  
    loader_.Close();
 diff --git a/src/ui/vulkan/vulkan_presenter.cpp b/src/ui/vulkan/vulkan_presenter.cpp
-index 23645ef..f5a9c6a 100644
+index 23645ef..ef70b9b 100644
 --- a/src/ui/vulkan/vulkan_presenter.cpp
 +++ b/src/ui/vulkan/vulkan_presenter.cpp
 @@ -9,8 +9,12 @@
@@ -17294,6 +17742,15 @@ index 23645ef..f5a9c6a 100644
  #if defined(REX_HAS_FIDELITYFX_RUNTIME) && REX_HAS_FIDELITYFX_RUNTIME
  namespace {
  
+@@ -109,7 +142,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL FfxVkGetDeviceProcAddrCompat(VkDevice d
+ namespace shaders {
+ #include "../shaders/vulkan_spirv/guest_output_bilinear_dither_ps.h"
+ #include "../shaders/vulkan_spirv/guest_output_bilinear_ps.h"
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+ #include "../shaders/vulkan_spirv/guest_output_ffx_cas_resample_dither_ps.h"
+ #include "../shaders/vulkan_spirv/guest_output_ffx_cas_resample_ps.h"
+ #include "../shaders/vulkan_spirv/guest_output_ffx_cas_sharpen_dither_ps.h"
 @@ -129,9 +162,6 @@ VulkanPresenter::PaintContext::Submission::~Submission() {
      dfn.vkDestroyCommandPool(device, draw_command_pool_, nullptr);
    }
@@ -17698,6 +18155,24 @@ index 23645ef..f5a9c6a 100644
      if (guest_output_flow.effect_count) {
        // Store the main target reference to the guest output image so it's not
        // destroyed while it's still potentially in use by main target painting
+@@ -2027,7 +2277,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+           uint32_t effect_constants_size = 0;
+           union {
+             BilinearConstants bilinear;
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+             CasSharpenConstants cas_sharpen;
+             CasResampleConstants cas_resample;
+             FsrEasuConstants fsr_easu;
+@@ -2039,7 +2289,7 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
+               effect_constants_size = sizeof(effect_constants.bilinear);
+               effect_constants.bilinear.Initialize(guest_output_flow, i);
+             } break;
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+             case kGuestOutputPaintPipelineLayoutIndexCasSharpen: {
+               effect_constants_size = sizeof(effect_constants.cas_sharpen);
+               effect_constants.cas_sharpen.Initialize(guest_output_flow, i,
 @@ -2126,6 +2376,10 @@ Presenter::PaintResult VulkanPresenter::PaintAndPresentImpl(bool execute_ui_draw
    // If hasn't presented the guest output, begin the pass to clear and, if
    // needed, to draw the UI.
@@ -17843,6 +18318,24 @@ index 23645ef..f5a9c6a 100644
        // Note that the semaphore wait (followed by reset) has been enqueued,
        // however, this should have no effect on anything here likely.
        return PaintResult::kNotPresentedConnectionOutdated;
+@@ -2334,7 +2649,7 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
+       case kGuestOutputPaintPipelineLayoutIndexBilinear:
+         guest_output_paint_push_constant_range_ffx.size = sizeof(BilinearConstants);
+         break;
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+       case kGuestOutputPaintPipelineLayoutIndexCasSharpen:
+         guest_output_paint_push_constant_range_ffx.size = sizeof(CasSharpenConstants);
+         break;
+@@ -2389,7 +2704,7 @@ bool VulkanPresenter::InitializeSurfaceIndependent() {
+         shader_module_create_info.codeSize = sizeof(shaders::guest_output_bilinear_dither_ps);
+         shader_module_create_info.pCode = shaders::guest_output_bilinear_dither_ps;
+         break;
+-#if defined(REX_HAS_FIDELITYFX_SDK)
++#if REX_HAS_FFX_SPATIAL
+       case GuestOutputPaintEffect::kCasSharpen:
+         shader_module_create_info.codeSize = sizeof(shaders::guest_output_ffx_cas_sharpen_ps);
+         shader_module_create_info.pCode = shaders::guest_output_ffx_cas_sharpen_ps;
 diff --git a/src/ui/vulkan/vulkan_submission_tracker.cpp b/src/ui/vulkan/vulkan_submission_tracker.cpp
 index 07a07b2..1e02e18 100644
 --- a/src/ui/vulkan/vulkan_submission_tracker.cpp

@@ -32,7 +32,7 @@ foreach ($hook in @('main_hook','hook_impl','file_redirect_hook','gsl_alloc_hook
     elseif ($candidates.Count -eq 1) { $libraries[$name] = $candidates[0].FullName }
     else { throw "Driver hook output missing or ambiguous: $name" }
 }
-$symbols = 'C:/Temp/mkvdcu-start-symbols'
+$symbols = if ($env:MKVDCU_ANDROID_SYMBOLS_DIR) { [IO.Path]::GetFullPath($env:MKVDCU_ANDROID_SYMBOLS_DIR) } else { 'C:/Temp/mkvdcu-start-symbols' }
 $licenses = Join-Path $workspace 'android/app/src/main/assets/licenses'
 New-Item -ItemType Directory -Force -Path $licenses | Out-Null
 $loaderSource = Join-Path $gameBuild '_deps/adrenotools_source-src'

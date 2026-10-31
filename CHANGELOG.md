@@ -1,4 +1,20 @@
 # Changelog
+## v0.1.19 — pré-release
+
+### Português
+
+- Adicionada seleção de reconstrução da saída Vulkan: bilinear, CAS e FSR espacial 1.0 (EASU + RCAS), com controle de nitidez RCAS. A opção opera na imagem final; não reduz o trabalho de renderização da UE3 nem promete ganho de FPS.
+- Presets Baixo e Padrão selecionam FSR para reconstruir escalas de cena menores; Alto mantém bilinear. O usuário ainda pode escolher o efeito e reiniciar o jogo para aplicar.
+- Integradas ao patch versionado do ReXGlue as alterações locais do SDK presentes no checkout, incluindo suporte espacial FidelityFX, cache nativo de pipeline, frame generation e atualizações Android/Vulkan, para que o build reproduza os binários da release.
+- Build e compatibilidade física em dispositivo precisam ser confirmados; esta versão não reivindica melhoria de desempenho nem validação de gameplay.
+
+### English
+
+- Added Vulkan output reconstruction choices: bilinear, CAS, and spatial FSR 1.0 (EASU + RCAS), with an RCAS sharpness control. This operates on the final image; it does not reduce UE3 rendering work or promise an FPS gain.
+- Low and Balanced presets select FSR to reconstruct smaller scene scales; High keeps bilinear. Users can still choose the effect and restart the game to apply it.
+- Added the local ReXGlue SDK checkout changes to the versioned patch, including spatial FidelityFX, native pipeline cache, frame generation, and Android/Vulkan updates, so release builds reproduce the shipped native code.
+- Build and physical device compatibility still require confirmation; this release does not claim a performance improvement or gameplay validation.
+
 ## v0.1.18 — pré-release
 
 ### Português
