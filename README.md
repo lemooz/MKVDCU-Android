@@ -6,7 +6,7 @@ An early Android ARM64 port of **Mortal Kombat vs. DC Universe**, built on the o
 
 ## Current prerelease
 
-Download **[MKVDCU Android v0.1.19](https://github.com/lemooz/MKVDCU-Android/releases/tag/v0.1.19)** from Releases. This experimental prerelease adds optional CAS and spatial FSR 1.0 output reconstruction controls, alongside the current Android/Vulkan renderer work. FSR is a visual reconstruction option and is not claimed to improve FPS. Combat performance and image quality still require device validation. The APK is ARM64 (`arm64-v8a`) and requires Android 9 or later with Vulkan 1.1 support. It does not include game data; provide your own legally obtained copy.
+Download **[MKVDCU Android v0.1.20](https://github.com/lemooz/MKVDCU-Android/releases/tag/v0.1.20)** from Releases. This experimental prerelease includes the latest local Android/Vulkan renderer changes, including early no-op draw rejection and an experimental transient depth/stencil store option for Android. The change has not been validated on a physical device; no FPS or visual-correctness gain is claimed. The APK is ARM64 (`arm64-v8a`) and requires Android 9 or later with Vulkan 1.1 support. It does not include game data; provide your own legally obtained copy.
 
 ### Tested devices
 
@@ -23,7 +23,7 @@ The app can import Vulkan driver packages and includes **partial, experimental s
 
 ## Install and play
 
-1. Download the normal APK from the [current prerelease](https://github.com/lemooz/MKVDCU-Android/releases/tag/v0.1.19). The diagnostic APK is for investigation and can affect performance.
+1. Download the normal APK from the [current prerelease](https://github.com/lemooz/MKVDCU-Android/releases/tag/v0.1.20). The diagnostic APK is for investigation and can affect performance.
 2. Install it on an Android 9+ ARM64 device with Vulkan 1.1.
 3. In the app, select your own game image when prompted. The game image is not part of this repository or release.
 4. Start with the system Vulkan driver. Try imported drivers only after the app verifies them.

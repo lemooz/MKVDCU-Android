@@ -1,4 +1,18 @@
 # Changelog
+## v0.1.20 — pré-release
+
+### Português
+
+- Incluídas na distribuição as alterações locais recentes do ReXGlue: descarte antecipado de draws sem saída, RelaxedPrecision em operações de texture fetch elegíveis e opção Android experimental de `STORE_OP_DONT_CARE` para depth/stencil.
+- A mudança de armazenamento pode afetar passes que reutilizam profundidade; desempenho e correção visual ainda precisam de validação física. Nenhum ganho de FPS é reivindicado.
+- Atualizada a versão do app e sincronizado `sdk.patch` com o checkout para reproduzir os binários ARM64.
+
+### English
+
+- Included the latest local ReXGlue changes in the distribution: early rejection of draws with no output, RelaxedPrecision for eligible texture-fetch operations, and an experimental Android `STORE_OP_DONT_CARE` option for depth/stencil.
+- The store behavior may affect passes that reuse depth; performance and visual correctness still need physical-device validation. No FPS gain is claimed.
+- Updated the app version and synchronized `sdk.patch` with the checkout so ARM64 binaries can be reproduced.
+
 ## v0.1.19 — pré-release
 
 ### Português

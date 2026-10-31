@@ -96,3 +96,7 @@ versionName `0.1.18`, versionCode `18`. Uses the game ISO's `Coalesced.ini` to c
 ## v0.1.19 prerelease
 
 versionName `0.1.19`, versionCode `19`. Adds optional guest-output CAS and spatial FSR 1.0 (EASU + RCAS) selection and RCAS sharpness control to the Android launcher, backed by the shader-only FidelityFX spatial path in the native Vulkan Presenter. Low and Balanced presets select FSR; High uses bilinear. This is a final-output reconstruction effect and does not reduce UE3 scene rendering cost or promise higher FPS. The versioned ReXGlue SDK patch now includes the current local SDK changes so the native source is reproducible. ARM64 Release and Diagnostic APKs passed native-library provenance checks; no new physical device or combat validation is claimed.
+
+## v0.1.20 prerelease
+
+versionName `0.1.20`, versionCode `20`. Packages the current local ReXGlue diff: rejects draws with no color/depth/memexport output before expensive preparation; applies fragment RelaxedPrecision around eligible texture-fetch translation; and adds an Android-default experimental depth/stencil `STORE_OP_DONT_CARE` option to reduce attachment stores. The depth/stencil change can affect later passes that load prior depth and has not been validated on a physical device; no performance or visual-correctness gain is claimed. `sdk.patch` matches the local SDK diff. ARM64 build and packaging checks remain pending.
