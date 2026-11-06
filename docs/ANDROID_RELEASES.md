@@ -32,6 +32,24 @@ Publish the normal Release APK. Diagnostic builds collect extra information and 
 
 The current release build uses the developer's local Android debug signing key. Keep using the same private key for updates to install over the previous version. Never commit or upload the keystore. If that key is lost or changes, Android may require uninstalling the old build before installing the new one; back up game saves first.
 
+## v0.1.21
+
+- `versionCode` 21, `versionName` 0.1.21, assinado com a chave de debug do desenvolvedor.
+- Assets em `dist/`: `mkvdcu-android-v0.1.21.apk`, `mkvdcu-android-v0.1.21-diagnostic.apk` e os
+  respectivos `.sha256`.
+- Conteúdo: controle de resolução interna (backbuffer) 100/75/50 %, presets "Compatibilidade" e
+  "Fluidez máxima" e o item "Diagnóstico do dispositivo". Nenhuma biblioteca nativa foi recompilada;
+  os padrões continuam iguais aos da v0.1.20. Ver `docs/ANDROID_RESOLUTION_AND_DIAGNOSTICS_2026-11-06.md`.
+- Build reproduzido neste workspace OneDrive sem rede: receita em
+  `docs/ANDROID_BUILD_ONEDRIVE_2026-11-06.md` (`-x lintVitalRelease`, `ANDROID_USER_HOME` e
+  `MKVDCU_ANDROID_BUILD_DIR` fora do OneDrive).
+- Nota de instalação: o aparelho conectado (SM-A546E, Exynos 1380, Android 16) tinha instalado um
+  `versionName` 0.2.3 / `versionCode` 24 de outra linha de trabalho, maior que esta versão. O APK 0.1.21
+  (code 21) não instala por cima sem desinstalar antes — o que apaga dados do app — ou sem gerar um build
+  com `versionCode` > 24.
+- Nenhuma medição de FPS em aparelho nesta versão; o ganho do backbuffer deve ser medido antes de
+  promover qualquer preset como recomendado.
+
 ## First public release
 
 - Tag: `v0.1.0`

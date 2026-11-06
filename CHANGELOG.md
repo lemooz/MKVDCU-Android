@@ -1,4 +1,22 @@
 # Changelog
+## v0.1.21 — pré-release
+
+### Português
+
+- Adicionado controle da resolução interna do jogo (backbuffer do convidado): 100% (1280×720, padrão), 75% (960×540) e 50% (640×360). Antes o app enviava sempre `--port_internal_resolution_percent=100`; agora o valor é escolhido em Configurações → Gráficos e desempenho → "Resolução interna do jogo (backbuffer)" e entra na próxima sessão.
+- A cena e o backbuffer passam a ser resolvidos com menos pixels e o Presenter amplia para a tela; o efeito combina com CAS/FSR. A UI recomenda manter a resolução interna maior ou igual à escala de cena para não reduzir duas vezes.
+- Dois presets novos: "Compatibilidade — sem recursos experimentais" (desliga override UE3, DXT1 16 bits e precisão reduzida; cena e backbuffer em 100%, reconstrução bilinear, 60 FPS) e "Fluidez máxima — backbuffer 50%" (cena 50%, backbuffer 50%, FSR 1.0 com nitidez 0,40, 30 FPS).
+- Novo item "Diagnóstico do dispositivo" no menu Configurações: aparelho, placa, SoC, Android, ABI, núcleos, RAM, driver Vulkan em uso, preset, escala de cena, backbuffer, reconstrução, filtragem, limite de FPS e cache, com botão Copiar — serve para relatar incompatibilidade de driver sem precisar de ADB.
+- Nenhum caminho de renderização nativo foi alterado nesta versão e os padrões continuam idênticos aos da v0.1.20 (backbuffer 100%, presets Desempenho Mali/Padrão/Alto inalterados). Nenhum ganho de FPS é reivindicado sem medição no aparelho; o ganho esperado do backbuffer é proporcional à redução de pixels (75% ≈ 0,56× pixels, 50% ≈ 0,25×), limitado por sombras e efeitos com resolução fixa.
+
+### English
+
+- Added a game internal resolution (guest backbuffer) control: 100% (1280×720, default), 75% (960×540) and 50% (640×360). The app previously always passed `--port_internal_resolution_percent=100`; the value is now selected in Settings → Graphics and applied on the next game session.
+- Scene and backbuffer are resolved with fewer pixels and the Presenter upscales to the screen; it combines with CAS/FSR. The UI recommends keeping the internal resolution at or above the scene scale to avoid double reduction.
+- Two new presets: "Compatibility — no experimental features" (disables the UE3 override, 16-bit DXT1 and reduced precision; scene and backbuffer at 100%, bilinear reconstruction, 60 FPS) and "Maximum smoothness — 50% backbuffer" (50% scene, 50% backbuffer, FSR 1.0 at 0.40 sharpness, 30 FPS).
+- New "Device diagnostics" entry in the Settings menu: device, board, SoC, Android, ABI, cores, RAM, active Vulkan driver, preset, scene scale, backbuffer, reconstruction, filtering, FPS limit and cache, with a Copy button — useful for driver incompatibility reports without ADB.
+- No native rendering path was changed and defaults match v0.1.20 (backbuffer 100%, Mali Performance/Balanced/High presets unchanged). No FPS gain is claimed without on-device measurement; the expected backbuffer gain scales with pixel count (75% ≈ 0.56× pixels, 50% ≈ 0.25×) and is limited by fixed-resolution shadows and effects.
+
 ## v0.1.20 — pré-release
 
 ### Português

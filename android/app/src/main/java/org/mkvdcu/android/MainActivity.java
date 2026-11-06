@@ -231,7 +231,7 @@ public class MainActivity extends Activity {
                 "Diagnóstico nativo: " + (prefs.diagnostics() ? "ativado" : "desativado"),
                 "★ Predefinição gráfica: " + graphics.presetName(),
                 "Gráficos e desempenho (avançado)",
-                "Exportar métricas da última sessão", "Exportar frametimes da última sessão", "Controle na tela — personalizar", "Atualizações pelo GitHub"};
+                "Exportar métricas da última sessão", "Exportar frametimes da última sessão", "Controle na tela — personalizar", "Atualizações pelo GitHub", "Diagnóstico do dispositivo"};
         new AlertDialog.Builder(this)
                 .setTitle("Configurações")
                 .setItems(items, (dialog, which) -> {
@@ -249,6 +249,7 @@ public class MainActivity extends Activity {
                     if (which == 4) showPresetDialog();
                     if (which == 5) showGraphicsSettings();
                     if (which == 9) startActivity(new Intent(this, UpdateActivity.class));
+                    if (which == 10) showDeviceDiagnostics();
                     if (which == 8) startActivity(new Intent(this, GamepadEditorActivity.class));
                     if (which == 6 || which == 7) {
                         Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/csv")
@@ -342,7 +343,9 @@ public class MainActivity extends Activity {
             "FXAA do Presenter: " + GraphicsSettings.PRESENTER_EFFECT_NAMES[graphics.presenterEffect()],
             "Patch UE3 — sombras reduzidas: " + (graphics.ue3PerformancePatch() ? "ativado" : "desativado"),
             "Reconstrução da imagem: " + GraphicsSettings.PRESENT_EFFECT_NAMES[graphics.presentEffect()],
-            "Nitidez do FSR (RCAS): " + GraphicsSettings.FSR_SHARPNESS_NAMES[java.util.Arrays.binarySearch(GraphicsSettings.FSR_SHARPNESS, graphics.fsrSharpness())]};
+            "Nitidez do FSR (RCAS): " + GraphicsSettings.FSR_SHARPNESS_NAMES[java.util.Arrays.binarySearch(GraphicsSettings.FSR_SHARPNESS, graphics.fsrSharpness())],
+            "Resolução interna do jogo (backbuffer): " + GraphicsSettings.internalScaleName(graphics.internalScale()),
+            "Sobre a resolução interna"};
         new AlertDialog.Builder(this).setTitle("Gráficos — próxima sessão")
             .setItems(items, (dialog, which) -> {
                 if (which == 0) showPresetDialog();
@@ -519,6 +522,19 @@ public class MainActivity extends Activity {
                     .setSingleChoiceItems(GraphicsSettings.PRESENT_EFFECT_NAMES, graphics.presentEffect(), (d, w) -> {
                         graphics.setPresentEffect(GraphicsSettings.PRESENT_EFFECTS[w]); d.dismiss(); showGraphicsSettings();
                     }).setNegativeButton("Cancelar", null).show();
+                if (which == 33) {
+                    int selected = 0;
+                    for (int i = 0; i < GraphicsSettings.INTERNAL_SCALES.length; i++)
+                        if (GraphicsSettings.INTERNAL_SCALES[i] == graphics.internalScale()) selected = i;
+                    graphicsChoiceDialog("Resolução interna do jogo — próxima sessão",
+                        "É a resolução em que o jogo realmente desenha cada quadro: 100% = 1280×720, 75% = 960×540, 50% = 640×360. O Presenter amplia essa imagem para a tela, então todos os draws, sombras e efeitos custam proporcionalmente menos pixels — em GPU limitada este é o ajuste de maior impacto. A interface e a arte 2D do jogo também são desenhadas nesse tamanho, por isso textos e detalhes finos ficam mais suaves nas opções menores. Combine com Reconstrução da imagem em CAS ou FSR 1.0 para recuperar nitidez. Não altera a simulação, o relógio do jogo nem o áudio. Use uma resolução interna maior ou igual à escala da cena: 50% com cena 0,5× rende 520×312 de cena dentro de 640×360. Reinicie o jogo após alterar.")
+                        .setSingleChoiceItems(GraphicsSettings.INTERNAL_SCALE_NAMES, selected, (d, w) -> {
+                            graphics.setInternalScale(GraphicsSettings.INTERNAL_SCALES[w]); d.dismiss(); showGraphicsSettings();
+                        }).setNegativeButton("Cancelar", null).show();
+                }
+                if (which == 34) new AlertDialog.Builder(this).setTitle("Resolução interna × escala da cena")
+                    .setMessage("São dois ajustes diferentes. A escala da cena (52×31/78×46/104×62) muda os buffers que a UE3 aloca antes de iniciar; a resolução interna muda o backbuffer guest em que a GPU desenha. Baixar a resolução interna reduz o custo de todo pixel desenhado; baixar a escala da cena reduz buffers e algumas passagens, mas mantém o backbuffer. Em aparelhos limitados por GPU, mexa primeiro na resolução interna; se ainda faltar folga, reduza também a escala da cena. Nenhum dos dois toca na lógica do jogo.")
+                    .setPositiveButton("OK", null).show();
                 if (which == 32) graphicsChoiceDialog("Nitidez do FSR (RCAS)",
                     "Ajusta a nitidez do passe FSR. Valores maiores podem realçar ruído e serrilhado. Só tem efeito quando a reconstrução está em FSR.")
                     .setSingleChoiceItems(GraphicsSettings.FSR_SHARPNESS_NAMES, java.util.Arrays.binarySearch(GraphicsSettings.FSR_SHARPNESS, graphics.fsrSharpness()), (d, w) -> {
@@ -545,6 +561,61 @@ public class MainActivity extends Activity {
                         graphics.setTurnipMode(w); d.dismiss(); showGraphicsSettings();
                     }).setNegativeButton("Cancelar", null).show();
             }).setPositiveButton("Fechar", null).show();
+    }
+
+    // One screen with everything needed to compare two phones or file a bug:
+    // hardware, driver, and the effective settings of the next session.
+    private void showDeviceDiagnostics() {
+        GraphicsSettings graphics = new GraphicsSettings(this);
+        StringBuilder sb = new StringBuilder();
+        sb.append("Aparelho: ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n');
+        sb.append("Placa: ").append(Build.DEVICE).append(" / ").append(Build.HARDWARE).append('\n');
+        if (Build.VERSION.SDK_INT >= 31)
+            sb.append("SoC: ").append(Build.SOC_MANUFACTURER).append(' ').append(Build.SOC_MODEL).append('\n');
+        sb.append("Android: ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n");
+        sb.append("ABI: ").append(Build.SUPPORTED_ABIS.length > 0 ? Build.SUPPORTED_ABIS[0] : "desconhecida").append('\n');
+        sb.append("CPUs visíveis: ").append(Runtime.getRuntime().availableProcessors()).append('\n');
+        try {
+            android.app.ActivityManager manager = getSystemService(android.app.ActivityManager.class);
+            if (manager != null) {
+                android.app.ActivityManager.MemoryInfo info = new android.app.ActivityManager.MemoryInfo();
+                manager.getMemoryInfo(info);
+                sb.append("RAM: ").append(info.totalMem / (1024L * 1024L)).append(" MiB (disponível ")
+                        .append(info.availMem / (1024L * 1024L)).append(" MiB)\n");
+                sb.append("Aparelho de pouca RAM: ").append(manager.isLowRamDevice() ? "sim" : "não").append('\n');
+            }
+        } catch (RuntimeException ignored) { }
+        DriverStore.Driver driver = new DriverStore(this).get(prefs.getDriverId());
+        sb.append("\nDriver Vulkan: ").append(driver == null ? "Sistema" : driver.name)
+                .append(driver == null || driver.kind.equals("system") ? " (driver Android original)" : " (" + driver.version + ")").append('\n');
+        sb.append("Predefinição: ").append(graphics.presetName()).append('\n');
+        sb.append("Cena UE3: ").append(GraphicsSettings.scaleDescription(buildGraphicsIntent()))
+                .append("\nBackbuffer do jogo: ").append(GraphicsSettings.internalScaleName(graphics.internalScale()))
+                .append("\nReconstrução: ").append(GraphicsSettings.PRESENT_EFFECT_NAMES[graphics.presentEffect()])
+                .append("\nFiltragem anisotrópica: ").append(GraphicsSettings.FILTER_NAMES[Math.max(0, java.util.Arrays.binarySearch(GraphicsSettings.FILTERS, graphics.filter()))])
+                .append("\nLimite de saída: ").append(graphics.fpsLimit() == 0 ? "sem limite" : graphics.fpsLimit() + " FPS")
+                .append("\nCache de texturas: ").append(graphics.cacheMb()).append(" MiB")
+                .append("\nNúcleos: ").append(graphics.cores() == 0 ? "automático (Android decide)" : "até " + graphics.cores())
+                .append('\n');
+        sb.append("\nSe um driver importado falhar antes dos primeiros quadros, a próxima abertura volta ao driver do sistema. "
+                + "Para comparar aparelhos, mantenha predefinição, driver e cache aquecido iguais; mude um ajuste por vez.");
+        final String report = sb.toString();
+        new AlertDialog.Builder(this)
+                .setTitle("Diagnóstico do dispositivo")
+                .setMessage(report)
+                .setPositiveButton("Copiar", (d, w) -> {
+                    android.content.ClipboardManager clipboard = getSystemService(android.content.ClipboardManager.class);
+                    if (clipboard != null) clipboard.setPrimaryClip(android.content.ClipData.newPlainText("MKVDCU", report));
+                    Toast.makeText(this, "Diagnóstico copiado", Toast.LENGTH_SHORT).show();
+                })
+                .setNegativeButton("Fechar", null)
+                .show();
+    }
+
+    private Intent buildGraphicsIntent() {
+        Intent intent = new Intent();
+        new GraphicsSettings(this).attach(intent);
+        return intent;
     }
 
     private void showAbout() {

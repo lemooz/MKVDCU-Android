@@ -2,3 +2,11 @@
 plugins {
     id 'com.android.application' version '8.7.3' apply false
 }
+
+// Set MKVDCU_ANDROID_BUILD_DIR to move every build output outside the source
+// tree. A workspace kept in a synced folder (OneDrive) holds cloud
+// placeholders that Java cannot overwrite, so the build needs its own root.
+def externalBuildRoot = System.getenv('MKVDCU_ANDROID_BUILD_DIR')
+if (externalBuildRoot) {
+    layout.buildDirectory.set(file("${externalBuildRoot}/root"))
+}

@@ -18,6 +18,15 @@ final class GraphicsSettings {
     private static final String PREFIX = "graphics_";
     static final int[] SCALES = {100, 75, 50};
     static final String[] SCALE_NAMES = {"1× — cena 1040×624", "0,75× — cena 780×468 (experimental)", "0,5× — cena 520×312 (experimental)"};
+    // Guest backbuffer (the surface the game draws into). The port's presenter
+    // already reconstructs smaller scenes to 1280x720, so a smaller backbuffer
+    // upscales through the same path while cutting every draw's pixel cost.
+    static final int[] INTERNAL_SCALES = {100, 75, 50};
+    static final String[] INTERNAL_SCALE_NAMES = {
+        "100% — backbuffer 1280×720 (padrão)",
+        "75% — backbuffer 960×540, reconstruído para a tela",
+        "50% — backbuffer 640×360, reconstruído para a tela"
+    };
     static final int[] CORE_COUNTS = {0, 1, 2, 3, 4, 6, 8, 12};
     static final int[] FPS_LIMITS = {0, 24, 30, 45, 60, 90, 120};
     static final int[] FRAME_SKIP_VALUES = {0, 1, 2, 3};
@@ -37,15 +46,21 @@ final class GraphicsSettings {
     static final int PRESET_LOW = 0;
     static final int PRESET_BALANCED = 1;
     static final int PRESET_HIGH = 2;
+    static final int PRESET_SAFE = 3;
+    static final int PRESET_FLUID = 4;
     static final String[] PRESET_NAMES = {
         "Desempenho Mali — alvo 30 FPS",
         "Padrão — equilibrado",
-        "Alto — qualidade"
+        "Alto — qualidade",
+        "Compatibilidade — sem recursos experimentais",
+        "Fluidez máxima — backbuffer 50%"
     };
     static final String[] PRESET_DESCRIPTIONS = {
         "Desempenho agressivo: cena 0,5× (520×312), FXAA e filtragem anisotrópica desligados, mip DXT +1, DXT1 compacto RGB5A1, RelaxedPrecision e override UE3 derivado da ISO que reduz Branching PCF e mapas de sombra. Pode reduzir detalhes, sombras e alterar cores; formatos sem suporte mantêm fallback. Cache 256/512 MiB, submissões agrupadas e alvo de apresentação 30 FPS. O limitador não pausa o XE_SWAP nem muda o relógio do jogo.",
         "Cena solicitada 0,75× (780×468), saída 720p, texturas originais, cache 384/768 MiB, submissões agrupadas e limite de saída 60 FPS. Escala experimental; não limita a simulação do jogo.",
-        "Cena nativa 1040×624, saída 720p, texturas originais, filtragem 2×, cache 768/1536 MiB e limite de saída 60 FPS. Maior uso de RAM."
+        "Cena nativa 1040×624, saída 720p, texturas originais, filtragem 2×, cache 768/1536 MiB e limite de saída 60 FPS. Maior uso de RAM.",
+        "Desliga tudo o que muda imagem ou cores: sem SPIR-V SSA, sem precisão reduzida, sem DXT1 de 16 bits, sem patch UE3, sem frame generation, sem pulo de quadros e sem escala de cena. Backbuffer em 1280×720, reconstrução bilinear e filtragem do próprio jogo. É o caminho mais próximo do renderizador original — use quando aparecer artefato gráfico e ainda não souber qual opção o causou.",
+        "Maior ganho disponível sem trocar o driver: backbuffer do jogo em 640×360 e cena 520×312, reconstruídos para 1280×720 pelo Presenter com FSR 1.0, FXAA desligado, filtragem desligada, cache 256/512 MiB, DXT1 compacto e RelaxedPrecision ativos e alvo de saída 30 FPS. Reduz bastante a carga por pixel, mas a imagem fica visivelmente mais suave e detalhes finos (texto, fios do HUD) perdem definição. Não altera a simulação."
     };
 
     static final String[] TURNIP_MODES = {"Automático (padrão do driver)", "Sysmem (experimental)", "GMEM (experimental)"};
@@ -58,13 +73,80 @@ final class GraphicsSettings {
         return "Personalizado";
     }
     void applyPreset(int preset) {
-        if (preset < PRESET_LOW || preset > PRESET_HIGH) return;
+        if (preset < PRESET_LOW || preset > PRESET_FLUID) return;
+        if (preset == PRESET_SAFE) {
+            // Everything that can change pixels, colours or timing back to the
+            // renderer defaults, so a graphical artefact can be isolated fast.
+            prefs.edit()
+                .putInt(PREFIX + "scale_percent", 100)
+                .putInt(PREFIX + "internal_scale", 100)
+                .putInt(PREFIX + "filter", -1)
+                .putInt(PREFIX + "cache_mb", 384)
+                .putInt(PREFIX + "mip_drop", 0)
+                .putBoolean(PREFIX + "batch", false)
+                .putInt(PREFIX + "gpu_timing", 64)
+                .putBoolean(PREFIX + "gpu_stages", false)
+                .putBoolean(PREFIX + "ssa", false)
+                .putBoolean(PREFIX + "render_area", true)
+                .putBoolean(PREFIX + "transfer_area", true)
+                .putBoolean(PREFIX + "economy", false)
+                .putBoolean(PREFIX + "compact_memory", false)
+                .putBoolean(PREFIX + "frame_generation", false)
+                .putInt(PREFIX + "frame_generation_factor", 2)
+                .putBoolean(PREFIX + "ring_backoff", true)
+                .putBoolean(PREFIX + "relaxed_fragment", false)
+                .putBoolean(PREFIX + "compact_dxt1", false)
+                .putBoolean(PREFIX + "ue3_performance_patch", false)
+                .putInt(PREFIX + "presenter_effect", 0)
+                .putInt(PREFIX + "present_effect", 0)
+                .putInt(PREFIX + "fsr_sharpness", 20)
+                .putInt(PREFIX + "fps_limit", 60)
+                .putInt(PREFIX + "pipeline_threads", -1)
+                .putInt(PREFIX + "video_mode", 0)
+                .putInt(PREFIX + "frame_skip", 0)
+                .putInt(PREFIX + "active_preset", preset)
+                .apply();
+            return;
+        }
+        if (preset == PRESET_FLUID) {
+            prefs.edit()
+                .putInt(PREFIX + "scale_percent", 50)
+                .putInt(PREFIX + "internal_scale", 50)
+                .putInt(PREFIX + "filter", 0)
+                .putInt(PREFIX + "cache_mb", 256)
+                .putInt(PREFIX + "mip_drop", 1)
+                .putBoolean(PREFIX + "batch", true)
+                .putInt(PREFIX + "gpu_timing", 64)
+                .putBoolean(PREFIX + "gpu_stages", false)
+                .putBoolean(PREFIX + "ssa", false)
+                .putBoolean(PREFIX + "render_area", true)
+                .putBoolean(PREFIX + "transfer_area", true)
+                .putBoolean(PREFIX + "economy", false)
+                .putBoolean(PREFIX + "compact_memory", false)
+                .putBoolean(PREFIX + "frame_generation", false)
+                .putInt(PREFIX + "frame_generation_factor", 2)
+                .putBoolean(PREFIX + "ring_backoff", true)
+                .putBoolean(PREFIX + "relaxed_fragment", true)
+                .putBoolean(PREFIX + "compact_dxt1", true)
+                .putBoolean(PREFIX + "ue3_performance_patch", true)
+                .putInt(PREFIX + "presenter_effect", 0)
+                .putInt(PREFIX + "present_effect", 2)
+                .putInt(PREFIX + "fsr_sharpness", 40)
+                .putInt(PREFIX + "fps_limit", 30)
+                .putInt(PREFIX + "pipeline_threads", -1)
+                .putInt(PREFIX + "video_mode", 0)
+                .putInt(PREFIX + "frame_skip", 0)
+                .putInt(PREFIX + "active_preset", preset)
+                .apply();
+            return;
+        }
         // Driver selection and compatibility options belong to the driver
         // manager. Applying a graphics preset must not reset those choices.
         boolean low = preset == PRESET_LOW;
         boolean high = preset == PRESET_HIGH;
         prefs.edit()
             .putInt(PREFIX + "scale_percent", low ? 50 : high ? 100 : 75)
+            .putInt(PREFIX + "internal_scale", 100)
             .putInt(PREFIX + "filter", low ? 0 : high ? 2 : -1)
             .putInt(PREFIX + "cache_mb", low ? 256 : high ? 768 : 384)
             .putInt(PREFIX + "mip_drop", low ? 1 : 0)
@@ -96,6 +178,13 @@ final class GraphicsSettings {
     }
     int scalePercent() { return allowed(prefs.getInt(PREFIX + "scale_percent", 100), SCALES, 100); }
     void setScalePercent(int value) { editCustom().putInt(PREFIX + "scale_percent", allowed(value, SCALES, 100)).apply(); }
+    int internalScale() { return allowed(prefs.getInt(PREFIX + "internal_scale", 100), INTERNAL_SCALES, 100); }
+    void setInternalScale(int value) { editCustom().putInt(PREFIX + "internal_scale", allowed(value, INTERNAL_SCALES, 100)).apply(); }
+    static int internalScale(Intent intent) { return allowed(intent.getIntExtra(PREFIX + "internal_scale", 100), INTERNAL_SCALES, 100); }
+    static String internalScaleName(int percent) {
+        for (int i = 0; i < INTERNAL_SCALES.length; i++) if (INTERNAL_SCALES[i] == percent) return INTERNAL_SCALE_NAMES[i];
+        return INTERNAL_SCALE_NAMES[0];
+    }
     int cores() { return clampCores(prefs.getInt(PREFIX + "cpu_cores", 0)); }
     void setCores(int value) { editCustom().putInt(PREFIX + "cpu_cores", clampCores(value)).apply(); }
     static int[] coreCounts(Context context) {
@@ -217,6 +306,7 @@ final class GraphicsSettings {
             .remove(PREFIX + "present_effect").remove(PREFIX + "fsr_sharpness")
             .remove(PREFIX + "frame_skip")
             .remove(PREFIX + "frame_generation").remove(PREFIX + "frame_generation_adaptive").remove(PREFIX + "frame_generation_factor").remove(PREFIX + "panvk_tiler_heap_mb")
+            .remove(PREFIX + "internal_scale")
             .remove(PREFIX + "ring_backoff").remove(PREFIX + "relaxed_fragment").remove(PREFIX + "compact_dxt1")
             .remove(PREFIX + "presenter_effect")
             .remove(PREFIX + "ue3_performance_patch")
@@ -230,7 +320,7 @@ final class GraphicsSettings {
             .putExtra(PREFIX + "batch", batch()).putExtra(PREFIX + "video_mode", videoMode())
             .putExtra(PREFIX + "gpu_timing", gpuTiming()).putExtra(PREFIX + "gpu_stages", gpuStages())
             .putExtra(PREFIX + "pipeline_threads", pipelineThreads()).putExtra(PREFIX + "turnip_mode", turnipMode()).putExtra(PREFIX + "panvk_late_stencil", panvkLateStencil()).putExtra(PREFIX + "panvk_tiler_heap_mb", panvkTilerHeapMb())
-            .putExtra(PREFIX + "scale_percent", scalePercent()).putExtra(PREFIX + "cpu_cores", cores())
+            .putExtra(PREFIX + "scale_percent", scalePercent()).putExtra(PREFIX + "internal_scale", internalScale()).putExtra(PREFIX + "cpu_cores", cores())
             .putExtra(PREFIX + "economy", economy()).putExtra(PREFIX + "compact_memory", compactMemory()).putExtra(PREFIX + "fps_limit", fpsLimit())
             .putExtra(PREFIX + "frame_skip", frameSkip())
             .putExtra(PREFIX + "frame_generation", frameGeneration())
@@ -267,7 +357,7 @@ final class GraphicsSettings {
         args.add("--swap_post_effect=" + (presenterEffect == 2 ? "fxaa_extreme" : presenterEffect == 1 ? "fxaa" : "none"));
         args.add("--present_effect=" + presentEffectArgument(intent));
         args.add("--present_fsr_sharpness_reduction=" + String.format(java.util.Locale.ROOT, "%.2f", fsrSharpness(intent) / 100.0f));
-        args.add("--port_internal_resolution_percent=100");
+        args.add("--port_internal_resolution_percent=" + internalScale(intent));
         args.add("--port_scene_resolution_percent=" + scalePercent(intent));
         args.add("--texture_cache_memory_limit_soft_lifetime=" + (compact ? 5 : 30));
         args.add("--anisotropic_override=" + filter);
@@ -306,7 +396,7 @@ final class GraphicsSettings {
             : intent.getBooleanExtra(PREFIX + "render_area", true);
     }
     static String summary(Intent intent) {
-        return "separate_present_queue=" + intent.getBooleanExtra(PREFIX + "present_queue", false) + "; requested_internal=" + scaleDescription(intent) + "; cpu_cores=" + cores(intent) + "; economy=" + economy(intent) +
+        return "separate_present_queue=" + intent.getBooleanExtra(PREFIX + "present_queue", false) + "; requested_internal=" + scaleDescription(intent) + "; internal_scale_percent=" + internalScale(intent) + "; cpu_cores=" + cores(intent) + "; economy=" + economy(intent) +
             "; compact_memory=" + intent.getBooleanExtra(PREFIX + "compact_memory", false) + "; presentation_limit_fps=" + effectiveFpsLimit(intent) + "; anisotropic=" + allowed(intent.getIntExtra(PREFIX + "filter", -1), FILTERS, -1) +
             "; presentation_frame_skip=" + allowed(intent.getIntExtra(PREFIX + "frame_skip", 0), FRAME_SKIP_VALUES, 0) +
             "; texture_cache_soft_mb=" + allowed(intent.getIntExtra(PREFIX + "cache_mb", 384), CACHE_MB, 384) +
