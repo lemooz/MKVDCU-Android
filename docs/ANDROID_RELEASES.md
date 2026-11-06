@@ -34,7 +34,7 @@ The current release build uses the developer's local Android debug signing key. 
 
 ## v0.1.21
 
-- `versionCode` 21, `versionName` 0.1.21, assinado com a chave de debug do desenvolvedor.
+- `versionCode` 25, `versionName` 0.1.21, assinado com a chave de debug do desenvolvedor.
 - Assets em `dist/`: `mkvdcu-android-v0.1.21.apk`, `mkvdcu-android-v0.1.21-diagnostic.apk` e os
   respectivos `.sha256`.
 - Conteúdo: controle de resolução interna (backbuffer) 100/75/50 %, presets "Compatibilidade" e
@@ -43,10 +43,10 @@ The current release build uses the developer's local Android debug signing key. 
 - Build reproduzido neste workspace OneDrive sem rede: receita em
   `docs/ANDROID_BUILD_ONEDRIVE_2026-11-06.md` (`-x lintVitalRelease`, `ANDROID_USER_HOME` e
   `MKVDCU_ANDROID_BUILD_DIR` fora do OneDrive).
-- Nota de instalação: o aparelho conectado (SM-A546E, Exynos 1380, Android 16) tinha instalado um
-  `versionName` 0.2.3 / `versionCode` 24 de outra linha de trabalho, maior que esta versão. O APK 0.1.21
-  (code 21) não instala por cima sem desinstalar antes — o que apaga dados do app — ou sem gerar um build
-  com `versionCode` > 24.
+- Nota de instalação: `versionCode` foi atualizado para 25 para permitir instalação por cima de instalações prévias (ex.: code 24).
+
+
+
 - Nenhuma medição de FPS em aparelho nesta versão; o ganho do backbuffer deve ser medido antes de
   promover qualquer preset como recomendado.
 
